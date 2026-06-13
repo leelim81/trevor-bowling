@@ -71,6 +71,16 @@
   }
   .bigbtn:active{ transform:translateY(5px); box-shadow:0 3px 0 #b9821a, 0 8px 14px rgba(0,0,0,.4); }
   .howto{ margin-top:18px; font-size:13px; opacity:.7; line-height:1.5; }
+  #nameInput{
+    display:block; width:100%; max-width:300px; margin:0 auto 16px; text-align:center;
+    font-family:inherit; font-size:20px; font-weight:800; color:#fff;
+    padding:13px 16px; border-radius:14px; outline:none;
+    background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.18);
+    transition:border-color .15s, background .15s;
+  }
+  #nameInput::placeholder{ color:rgba(255,255,255,.4); font-weight:600; }
+  #nameInput:focus{ border-color:var(--gold); background:rgba(255,210,74,.10); }
+  .lbTitle{ font-size:14px; font-weight:800; letter-spacing:.04em; opacity:.85; margin-top:14px; margin-bottom:-4px; }
   .finalScore{ font-size:clamp(40px,12vw,64px); font-weight:900; color:var(--gold); line-height:1; margin:6px 0 2px;
     font-variant-numeric:tabular-nums; text-shadow:0 4px 18px rgba(255,200,60,.35); }
   .finalRank{ font-size:20px; font-weight:800; margin-bottom:6px; }
@@ -97,8 +107,8 @@
       <div class="score" id="scoreVal">0</div>
     </div>
     <div class="panel leader">
-      <div class="crown">👑</div>
-      <div class="leaderName">TREVOR</div>
+      <div class="crown" id="crownEl">👑</div>
+      <div class="leaderName" id="playerNameEl">TREVOR</div>
       <div class="rankRow"><span class="gem" id="gem">🥉</span><span class="rankName" id="rankName">Bronze</span></div>
     </div>
     <div class="panel frameInfo">
@@ -115,12 +125,13 @@
   <div class="card">
     <div class="crown" style="font-size:46px;">👑</div>
     <h1 class="title">TREVOR'S<br>BOWLING</h1>
-    <p class="subtitle">The lane belongs to Trevor. Always #1. 🎳</p>
+    <p class="subtitle">Type your name to play 🎳</p>
+    <input id="nameInput" type="text" placeholder="Your name" maxlength="14" autocomplete="off" autocapitalize="words" spellcheck="false" />
     <button class="bigbtn" id="startBtn">▶ PLAY</button>
     <div class="howto">
-      Pull back &amp; <b>swipe up</b> to throw.<br>
-      Aim a little left or right to curve it.<br>
-      A straight throw = STRIKE!
+      <b>Tap</b> or <b>swipe up</b> to throw — aim left/right to curve.<br>
+      Play as <b>Trevor</b> for magic strike powers 👑<br>
+      Everyone else plays real bowling (max 300)!
     </div>
   </div>
 </div>
@@ -128,10 +139,11 @@
 <!-- Results screen -->
 <div id="resultScreen" class="overlay hidden">
   <div class="card">
-    <div class="crown" style="font-size:40px;">🏆</div>
-    <div class="label" style="opacity:.8;">Trevor's Final Score</div>
+    <div class="crown" style="font-size:40px;" id="resultCrown">🏆</div>
+    <div class="label" style="opacity:.8;" id="finalLabel">Final Score</div>
     <div class="finalScore" id="finalScore">0</div>
     <div class="finalRank" id="finalRank">💎 Diamond</div>
+    <div class="lbTitle" id="lbTitle">🏆 Leaderboard</div>
     <div class="lb" id="leaderboard"></div>
     <div class="best" id="bestLine"></div>
     <button class="bigbtn" id="againBtn" style="margin-top:16px;">↻ PLAY AGAIN</button>
@@ -163,6 +175,12 @@ const finalScore  = document.getElementById('finalScore');
 const finalRank   = document.getElementById('finalRank');
 const leaderboard = document.getElementById('leaderboard');
 const bestLine    = document.getElementById('bestLine');
+const nameInput   = document.getElementById('nameInput');
+const crownEl     = document.getElementById('crownEl');
+const playerNameEl= document.getElementById('playerNameEl');
+const finalLabel  = document.getElementById('finalLabel');
+const resultCrown = document.getElementById('resultCrown');
+const lbTitle     = document.getElementById('lbTitle');
 
 // ---- screen sizing (responsive + retina) ----
 let W = 0, H = 0, DPR = 1;
@@ -202,35 +220,52 @@ function project(lx, ly){
 }
 
 // ============================================================
-//  Game constants (tuned so Trevor basically always wins)
+//  Game constants
 // ============================================================
 const PIN_R  = 0.05;     // lane-space radius
 const BALL_R = 0.055;
-const HIT_DIST   = PIN_R + BALL_R + 0.005;
-const CHAIN_DIST = 0.14;  // a falling pin clears its neighbours
-const ASSIST     = 1.1;   // pull the ball toward the pocket
+const HIT_DIST = PIN_R + BALL_R + 0.005;
 const BALL_START_Y = 0.965;
 
+// Physics is retuned per player in startGame():
+//   Trevor        -> heavy aim-assist + wide chain, so (almost) everything strikes
+//   everyone else -> real aim, real misses, real spares & opens
+let CHAIN_DIST = 0.14;   // how far a falling pin knocks its neighbours
+let ASSIST     = 1.1;    // how strongly the ball curves toward the pocket
+
+// Trevor's arcade scoring (everyone else uses real ten-pin scoring instead)
 const PIN_POINTS   = 500;
 const SPARE_BONUS  = 800;
 const strikeBonus  = (combo)=> 1000 * combo;     // grows with the combo
-const RANKS = [
+
+// Rank tiers depend on which scoring system is in play
+const RANKS_TREVOR = [
   { name:'Bronze',  gem:'🥉', min:0,     color:'#cd7f32' },
   { name:'Silver',  gem:'🥈', min:8000,  color:'#d6d9de' },
   { name:'Gold',    gem:'🥇', min:20000, color:'#ffd24a' },
   { name:'Diamond', gem:'💎', min:40000, color:'#7fe3ff' },
 ];
+const RANKS_STD = [   // real ten-pin scores top out at 300
+  { name:'Bronze',  gem:'🥉', min:0,   color:'#cd7f32' },
+  { name:'Silver',  gem:'🥈', min:100, color:'#d6d9de' },
+  { name:'Gold',    gem:'🥇', min:150, color:'#ffd24a' },
+  { name:'Diamond', gem:'💎', min:200, color:'#7fe3ff' },
+];
 
 // ============================================================
 //  Game state
 // ============================================================
-let phase = 'start';   // 'start' | 'aim' | 'roll' | 'resolve' | 'results'
+let phase = 'start';   // 'start' | 'aim' | 'roll' | 'resolve' | 'wait' | 'results'
+let playerName = 'Player';
+let isTrevor = false;
 let frame = 1, ballNum = 1;
+let rolls = [];            // pins knocked per ball — drives standard bowling scoring
+let tenthStart = 0;        // index into rolls where the 10th frame begins
+let arcadeScore = 0;       // Trevor's inflated running score
 let totalScore = 0, displayScore = 0, combo = 0;
 let pins = [];
 let pinsDownStartOfBall = 0;
 let resolveTimer = 0;
-let pins_settled = false;
 
 const ball = { x:0, y:BALL_START_Y, vx:0, vy:0, active:false, spin:0 };
 
@@ -346,7 +381,7 @@ function update(dt){
       // ball left the lane area?
       if(ball.y < -0.08 || Math.abs(ball.x) > 1.25){
         ball.active = false;
-        phase = 'resolve'; resolveTimer = 0; pins_settled = false;
+        phase = 'resolve'; resolveTimer = 0;
       }
     }
   }
@@ -363,61 +398,109 @@ function update(dt){
 // ============================================================
 //  Scoring + frame flow
 // ============================================================
+
+// Real ten-pin bowling score from the list of balls thrown so far.
+function standardScore(r){
+  let score = 0, i = 0;
+  for(let f=0; f<10; f++){
+    if(r[i] === undefined) break;
+    if(r[i] === 10){                            // strike: 10 + next two balls
+      score += 10 + (r[i+1]||0) + (r[i+2]||0);
+      i += 1;
+    } else if((r[i]||0) + (r[i+1]||0) === 10){  // spare: 10 + next ball
+      score += 10 + (r[i+2]||0);
+      i += 2;
+    } else {                                    // open frame
+      score += (r[i]||0) + (r[i+1]||0);
+      i += 2;
+    }
+  }
+  return score;
+}
+
+function recomputeScore(){
+  totalScore = isTrevor ? arcadeScore : standardScore(rolls);
+}
+
 function tallyBall(){
   phase = 'wait';                 // leave 'resolve' at once so a ball is tallied exactly once
+  const startDown = pinsDownStartOfBall;
   const down = downCount();
-  const knockedThisBall = down - pinsDownStartOfBall;
-  let gained = knockedThisBall * PIN_POINTS;
-  let msg = null, msgColor = '#fff';
+  const knocked = down - startDown;
+  rolls.push(knocked);
 
-  const isStrike = (ballNum===1 && down===10);
-  const isSpare  = (ballNum===2 && down===10);
+  const freshRack = (startDown === 0);
+  const isStrike  = freshRack && down === 10;   // cleared a full rack in one ball
+  const isSpare   = !isStrike && down === 10;   // cleared the rack across two balls
 
+  // Trevor's arcade points (everyone else is scored by standardScore instead)
+  let gained = knocked * PIN_POINTS, msg = null, msgColor = '#fff';
   if(isStrike){
-    combo += 1;
-    const b = strikeBonus(combo);
-    gained += b + 5000;
-    msg = combo>1 ? ('STRIKE! x'+combo) : 'STRIKE!';
-    msgColor = '#ffd24a';
-    burstConfetti(34);
-    sound.strike();
+    combo += 1; gained += strikeBonus(combo) + 5000;
+    msg = combo > 1 ? ('STRIKE! x'+combo) : 'STRIKE!'; msgColor = '#ffd24a';
+    burstConfetti(34); sound.strike();
   } else if(isSpare){
-    gained += SPARE_BONUS;
-    combo = 1;
+    gained += SPARE_BONUS; combo = 1;
     msg = 'SPARE!'; msgColor = '#7fe3ff';
-    burstConfetti(20);
-    sound.strike();
-  } else if(ballNum===2){
+    burstConfetti(20); sound.strike();
+  } else {
     combo = 0;
   }
+  arcadeScore += gained;
+  recomputeScore();
 
-  totalScore += gained;
-  if(gained>0) addPopup('+'+gained.toLocaleString(), msgColor);
+  if(isTrevor && gained > 0) addPopup('+'+gained.toLocaleString(), msgColor);
   if(msg) addPopup(msg, msgColor, true);
   updateRank();
 
-  // advance
-  const nextFrame = ()=>{
-    if(frame >= 10){ endGame(); return; }
-    frame += 1; ballNum = 1;
-    setupPins(); pinsDownStartOfBall = 0; resetBall();
-    phase = 'aim'; updateHUD();
-  };
-
-  if(isStrike || isSpare){
-    setTimeout(nextFrame, 950);
-  } else if(ballNum===1){
-    // throw the second ball at the leftover pins
-    ballNum = 2; pinsDownStartOfBall = down; resetBall();
-    phase = 'aim'; updateHUD();
+  // ---- what happens next ----
+  if(frame < 10){
+    if(isStrike) scheduleNext(950);
+    else if(ballNum === 1){
+      ballNum = 2; pinsDownStartOfBall = down; resetBall();
+      phase = 'aim'; updateHUD();
+    } else scheduleNext(650);
   } else {
-    setTimeout(nextFrame, 650);
+    advanceTenth();
   }
 }
 
+// Frames 1–9: load the next frame after a short celebration.
+function scheduleNext(delay){
+  setTimeout(()=>{
+    frame += 1; ballNum = 1;
+    setupPins(); pinsDownStartOfBall = 0; resetBall();
+    if(frame === 10) tenthStart = rolls.length;
+    phase = 'aim'; updateHUD();
+  }, delay);
+}
+
+// 10th frame: up to three balls, fresh pins after each strike and after a spare's bonus ball.
+function advanceTenth(){
+  const b = rolls.slice(tenthStart);
+  const thrown = b.length;
+  const cont = (resetRack, delay)=> setTimeout(()=>{
+    if(resetRack){ setupPins(); pinsDownStartOfBall = 0; }
+    else { pinsDownStartOfBall = downCount(); }
+    ballNum = thrown + 1; resetBall(); phase = 'aim'; updateHUD();
+  }, delay);
+  if(thrown === 1){
+    if(b[0] === 10) cont(true, 800);            // strike → fresh rack for ball 2
+    else            cont(false, 500);           // aim at the pins still standing
+  } else if(thrown === 2){
+    if(b[0] === 10)             cont(b[1] === 10, 800); // strike start → 3rd ball (fresh only if ball 2 also a strike)
+    else if(b[0] + b[1] === 10) cont(true, 800);        // spare → bonus 3rd ball on a fresh rack
+    else                        setTimeout(endGame, 700); // open 10th frame → done
+  } else {
+    setTimeout(endGame, 700);                             // three balls thrown → done
+  }
+}
+
+function activeRanks(){ return isTrevor ? RANKS_TREVOR : RANKS_STD; }
 function currentRank(){
-  let r = RANKS[0];
-  for(const t of RANKS){ if(totalScore >= t.min) r = t; }
+  const ranks = activeRanks();
+  let r = ranks[0];
+  for(const t of ranks){ if(totalScore >= t.min) r = t; }
   return r;
 }
 function updateRank(){
@@ -437,10 +520,27 @@ function updateHUD(){
 //  Game start / end
 // ============================================================
 function startGame(){
-  frame=1; ballNum=1; totalScore=0; displayScore=0; combo=0;
+  // read + tidy the typed name
+  const raw = (nameInput.value || '').trim().replace(/\s+/g,' ');
+  playerName = raw ? raw.slice(0,14) : 'Player';
+  isTrevor = playerName.toLowerCase() === 'trevor';
+
+  // retune physics for this player
+  if(isTrevor){ ASSIST = 1.1;  CHAIN_DIST = 0.14; }   // magic: (almost) always strikes
+  else        { ASSIST = 0.30; CHAIN_DIST = 0.12; }   // real aim, real misses
+
+  frame=1; ballNum=1; combo=0;
+  rolls=[]; tenthStart=0; arcadeScore=0;
+  totalScore=0; displayScore=0; scoreVal.textContent='0';
   confetti=[]; popups=[];
   setupPins(); pinsDownStartOfBall=0; resetBall();
   phase='aim';
+
+  // HUD identity
+  crownEl.textContent = isTrevor ? '👑' : '🎳';
+  playerNameEl.textContent = playerName.toUpperCase();
+  playerNameEl.style.color = isTrevor ? 'var(--gold)' : '#cfe3ff';
+
   startScreen.classList.add('hidden');
   resultScreen.classList.add('hidden');
   hud.classList.remove('hidden');
@@ -451,36 +551,52 @@ function startGame(){
 function endGame(){
   phase='results';
   hud.classList.add('hidden');
+  recomputeScore();
   const r = currentRank();
-  finalScore.textContent = totalScore.toLocaleString();
-  finalRank.textContent = r.gem + ' ' + r.name;
-  finalRank.style.color = r.color;
 
-  // best score (localStorage; harmless if blocked)
-  let best = 0;
-  try{ best = parseInt(localStorage.getItem('trevorBowlingBest')||'0',10)||0; }catch(e){}
-  if(totalScore > best){ best = totalScore; try{ localStorage.setItem('trevorBowlingBest', String(best)); }catch(e){} }
-  bestLine.textContent = '⭐ Best ever: ' + best.toLocaleString();
+  finalLabel.textContent  = playerName + "'s Final Score";
+  finalScore.textContent  = totalScore.toLocaleString();
+  finalRank.textContent   = r.gem + ' ' + r.name;
+  finalRank.style.color   = r.color;
+  resultCrown.textContent = isTrevor ? '👑' : '🏆';
 
-  // leaderboard — Trevor always #1, everyone else far below
-  const others = [
-    { name:'Pin-Pal Penny', score:720 },
-    { name:'Strikeout Sam', score:430 },
-    { name:'Bumper Bob',    score:260 },
-    { name:'Gutter Greg',   score:50  },
-  ];
-  const rows = [{ name:'Trevor', score:totalScore, you:true }, ...others]
-    .sort((a,b)=>b.score-a.score);
-  leaderboard.innerHTML = rows.map((row,i)=>
-    `<div class="lbRow${row.you?' you':''}">
+  // record this game, then show the board (device-local for now — online next)
+  const board = submitScore({ name: playerName, score: totalScore, trevor: isTrevor });
+  leaderboard.innerHTML = board.slice(0,8).map((row,i)=>{
+    const you = row._k === lastEntryKey;
+    return `<div class="lbRow${you?' you':''}">
        <div class="lbPos">${i===0?'👑':'#'+(i+1)}</div>
-       <div class="lbName">${row.name}</div>
-       <div class="lbScore">${row.score.toLocaleString()}</div>
-     </div>`).join('');
+       <div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div>
+       <div class="lbScore">${Number(row.score).toLocaleString()}</div>
+     </div>`;
+  }).join('');
+
+  let best = 0;
+  try{ best = parseInt(localStorage.getItem('tb_best')||'0',10)||0; }catch(e){}
+  if(totalScore > best){ best = totalScore; try{ localStorage.setItem('tb_best', String(best)); }catch(e){} }
+  bestLine.textContent = '⭐ Best on this device: ' + best.toLocaleString();
 
   resultScreen.classList.remove('hidden');
   burstConfetti(90);
   sound.strike();
+}
+
+// ---- Leaderboard storage -------------------------------------------------
+// Device-local for now. To go truly online, swap getLeaderboard()/submitScore()
+// for calls to a backend (e.g. Supabase REST) — the rest of the game is unchanged.
+let lastEntryKey = '';
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function getLeaderboard(){
+  try{ return JSON.parse(localStorage.getItem('tb_leaderboard') || '[]'); }catch(e){ return []; }
+}
+function submitScore(entry){
+  const list = getLeaderboard();
+  lastEntryKey = 'k_' + Math.floor(performance.now()) + '_' + Math.floor(Math.random()*1e6);
+  list.push({ name: entry.name, score: entry.score, trevor: !!entry.trevor, _k: lastEntryKey });
+  list.sort((a,b)=> b.score - a.score);
+  const top = list.slice(0,50);
+  try{ localStorage.setItem('tb_leaderboard', JSON.stringify(top)); }catch(e){}
+  return top;
 }
 
 // ============================================================
@@ -795,7 +911,13 @@ canvas.addEventListener('touchend', onUp, {passive:false});
 window.addEventListener('contextmenu', e=>e.preventDefault());
 
 document.getElementById('startBtn').addEventListener('click', ()=>{ sound.init(); startGame(); });
-document.getElementById('againBtn').addEventListener('click', ()=>{ startGame(); });
+nameInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ sound.init(); startGame(); } });
+document.getElementById('againBtn').addEventListener('click', ()=>{
+  resultScreen.classList.add('hidden');
+  startScreen.classList.remove('hidden');
+  nameInput.value = (playerName === 'Player') ? '' : playerName;
+  phase = 'start';
+});
 
 // ============================================================
 //  Sound — tiny WebAudio synth (best-effort, mutable)
