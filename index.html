@@ -560,16 +560,7 @@ function endGame(){
   finalRank.style.color   = r.color;
   resultCrown.textContent = isTrevor ? '👑' : '🏆';
 
-  // record this game, then show the board (device-local for now — online next)
-  const board = submitScore({ name: playerName, score: totalScore, trevor: isTrevor });
-  leaderboard.innerHTML = board.slice(0,8).map((row,i)=>{
-    const you = row._k === lastEntryKey;
-    return `<div class="lbRow${you?' you':''}">
-       <div class="lbPos">${i===0?'👑':'#'+(i+1)}</div>
-       <div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div>
-       <div class="lbScore">${Number(row.score).toLocaleString()}</div>
-     </div>`;
-  }).join('');
+  recordAndShow();
 
   let best = 0;
   try{ best = parseInt(localStorage.getItem('tb_best')||'0',10)||0; }catch(e){}
@@ -581,22 +572,89 @@ function endGame(){
   sound.strike();
 }
 
-// ---- Leaderboard storage -------------------------------------------------
-// Device-local for now. To go truly online, swap getLeaderboard()/submitScore()
-// for calls to a backend (e.g. Supabase REST) — the rest of the game is unchanged.
-let lastEntryKey = '';
+// ============================================================
+//  Leaderboard  (device-local always; worldwide when Firebase is configured)
+// ============================================================
+// ▼▼▼  PASTE YOUR FIREBASE WEB CONFIG HERE to switch on the worldwide board.
+//      Leave it as null and the game uses a device-local board (no fake names).
+const FIREBASE_CONFIG = null;
+/* it should look like this:
+const FIREBASE_CONFIG = {
+  apiKey:     "AIza................................",
+  authDomain: "trevor-bowling-xxxx.firebaseapp.com",
+  projectId:  "trevor-bowling-xxxx",
+  appId:      "1:000000000000:web:abcdef0123456789"
+};
+*/
+const SCORES_COLLECTION = 'scores';
+
+let myCid = '';
+let db = null, onlineState = 'off';   // 'off' | 'loading' | 'ready' | 'error'
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function getLeaderboard(){
-  try{ return JSON.parse(localStorage.getItem('tb_leaderboard') || '[]'); }catch(e){ return []; }
-}
-function submitScore(entry){
-  const list = getLeaderboard();
-  lastEntryKey = 'k_' + Math.floor(performance.now()) + '_' + Math.floor(Math.random()*1e6);
-  list.push({ name: entry.name, score: entry.score, trevor: !!entry.trevor, _k: lastEntryKey });
-  list.sort((a,b)=> b.score - a.score);
+
+// ---- device-local store (instant + offline fallback) ----
+function getLocalBoard(){ try{ return JSON.parse(localStorage.getItem('tb_leaderboard')||'[]'); }catch(e){ return []; } }
+function addLocal(entry){
+  const list = getLocalBoard();
+  list.push(entry); list.sort((a,b)=> b.score - a.score);
   const top = list.slice(0,50);
   try{ localStorage.setItem('tb_leaderboard', JSON.stringify(top)); }catch(e){}
   return top;
+}
+
+// ---- render the leaderboard rows ----
+function renderBoard(list, youKey, status){
+  lbTitle.innerHTML = '🏆 Leaderboard' + (status ? ' <span style="opacity:.55;font-weight:600">'+status+'</span>' : '');
+  leaderboard.innerHTML = list.slice(0,8).map((row,i)=>{
+    const you = youKey && row._k === youKey;
+    return `<div class="lbRow${you?' you':''}">
+       <div class="lbPos">${i===0?'👑':'#'+(i+1)}</div>
+       <div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div>
+       <div class="lbScore">${Number(row.score).toLocaleString()}</div>
+     </div>`;
+  }).join('');
+}
+
+// ---- Firebase Firestore (loaded on demand, only when configured) ----
+function loadScript(src){
+  return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+}
+async function initOnline(){
+  if(onlineState==='ready') return true;
+  if(onlineState==='loading' || !FIREBASE_CONFIG) return false;
+  onlineState='loading';
+  try{
+    const V='10.14.1';
+    await loadScript('https://www.gstatic.com/firebasejs/'+V+'/firebase-app-compat.js');
+    await loadScript('https://www.gstatic.com/firebasejs/'+V+'/firebase-firestore-compat.js');
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+    onlineState='ready'; return true;
+  }catch(e){ onlineState='error'; return false; }
+}
+async function submitOnline(e){
+  await db.collection(SCORES_COLLECTION).add({ name:e.name, score:e.score, trevor:e.trevor, cid:e._k, ts:Date.now() });
+}
+async function fetchOnline(){
+  const snap = await db.collection(SCORES_COLLECTION).orderBy('score','desc').limit(50).get();
+  return snap.docs.map(d=>{ const x=d.data(); return { name:x.name, score:x.score, trevor:!!x.trevor, _k:x.cid }; });
+}
+
+// ---- record this game + show the board (instant local, then worldwide) ----
+function recordAndShow(){
+  myCid = 'k_'+Math.floor(performance.now())+'_'+Math.floor(Math.random()*1e6);
+  const entry = { name:playerName, score:totalScore, trevor:isTrevor, _k:myCid };
+  const local = addLocal(entry);
+  renderBoard(local, myCid, FIREBASE_CONFIG ? '· connecting…' : '· this device');
+  if(!FIREBASE_CONFIG) return;
+  (async()=>{
+    const ok = await initOnline();
+    if(!ok){ renderBoard(local, myCid, '· offline'); return; }
+    try{
+      await submitOnline(entry);
+      renderBoard(await fetchOnline(), myCid, '· worldwide 🌐');
+    }catch(err){ renderBoard(local, myCid, '· offline'); }
+  })();
 }
 
 // ============================================================
