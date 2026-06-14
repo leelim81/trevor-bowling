@@ -127,6 +127,7 @@
     </div>
     <button class="bigbtn" id="startBtn">▶ PLAY</button>
     <div style="margin-top:12px;"><button class="onlinebtn" id="onlineBtn">🌐 Play Online with Friends</button></div>
+    <div style="margin-top:8px;"><button class="onlinebtn" id="lbBtn">🏆 View Leaderboard</button></div>
     <div class="howto">
       <b>Slide</b> up the screen to bowl — aim left/right to curve.<br>
       Real ten-pin scoring — strikes &amp; spares, max 300.<br>
@@ -182,6 +183,17 @@
   </div>
 </div>
 
+<!-- Leaderboard viewer -->
+<div id="lbScreen" class="overlay hidden">
+  <div class="card">
+    <div class="pc-crown" style="font-size:36px;">🏆</div>
+    <h2 class="title" style="font-size:clamp(22px,6vw,30px)">LEADERBOARD</h2>
+    <div class="lbTitle" id="lbViewTitle">🏆 Top Bowlers</div>
+    <div class="lb" id="lbList"></div>
+    <div style="margin-top:14px;"><button class="onlinebtn" id="lbBack">← Back</button></div>
+  </div>
+</div>
+
 <!-- Multiplayer in-game HUD -->
 <div id="mpHud" class="hidden">
   <div class="mpStrip" id="mpBar"></div>
@@ -220,6 +232,8 @@ const rnd=(a,b)=>a+Math.random()*(b-a);
 //  Lane layout (world units, ~metres)
 // ============================================================
 const LANE_HALF_W=0.55, GUTTER_W=0.18, HEAD_Z=-13.0, ROW_DZ=-0.30;
+let laneHalfW=LANE_HALF_W;   // current playable half-width (grows per frame later)
+let pinsBackZ=HEAD_Z+3*ROW_DZ;   // z of the deepest pin row (used to resolve once the ball is past)
 const BACK_Z=HEAD_Z+4*ROW_DZ-1.2, PIN_H=0.38, PIN_HW=0.058, START_Z=-0.3;
 const PIN_LAYOUT=[[0,0],[-0.1525,1],[0.1525,1],[-0.305,2],[0,2],[0.305,2],[-0.4575,3],[-0.1525,3],[0.1525,3],[0.4575,3]]
   .map(([x,row])=>({x, z:HEAD_Z+row*ROW_DZ}));
@@ -380,7 +394,7 @@ function makePinMesh(){ const g=new THREE.Group();
   for(const y of[0.245,0.285]){ const band=new THREE.Mesh(new THREE.CylinderGeometry(0.036,0.036,0.018,18,1,true),pinMatRed); band.position.y=y-PIN_H/2; band.castShadow=true; g.add(band); } return g; }
 
 // ---- ball ----
-let ballRadius=0.135, ballBody=null, ballMesh=null;
+let ballRadius=0.135, ballBody=null, ballMesh=null, bigBall=false;
 const ballMatHuman=new THREE.MeshStandardMaterial({color:0x1f6fe0,roughness:0.06,metalness:0.15,envMapIntensity:1.1});
 const ballMatCPU=new THREE.MeshStandardMaterial({color:0xc0392b,roughness:0.08,metalness:0.15,envMapIntensity:1.0});
 const ballMatTrevor=new THREE.MeshStandardMaterial({color:0xffc02e,roughness:0.05,metalness:0.4,emissive:0x5a3d00,emissiveIntensity:0.3,envMapIntensity:1.2});
@@ -508,8 +522,11 @@ function advanceTenth(P){
 function endTurn(){ if(MP.active){ mpEndMyFrame(); return; } curPlayer++; if(curPlayer>=players.length){ curPlayer=0; round++; } if(round>10){ endGame(); return; } startTurn(); }
 
 function configureBallFor(P){
-  steerK = 0; ballRadius = 0.135;          // fair physics for everyone — no magic ball / auto-steer
-  buildBall(P.isTrevor?ballMatTrevor:(P.isCPU?ballMatCPU:ballMatHuman));  // gold ball is cosmetic only now
+  steerK = 0;
+  bigBall = (P.isTrevor && Math.random()<0.10);      // 10%: Trevor's gutter-proof MEGA ball (3x size)
+  ballRadius = bigBall ? 0.405 : 0.135;
+  buildBall(P.isTrevor?ballMatTrevor:(P.isCPU?ballMatCPU:ballMatHuman));
+  if(bigBall) banner('🔮 MEGA BALL — too big for gutters!','#ffd24a');
 }
 function startTurn(){
   const P=players[curPlayer];
@@ -675,12 +692,19 @@ function tick(dt){
   if(phase==='rolling'){
     rollT+=dt; spawnTrail();
     if(steerK>1){ const tx=0.02; ballBody.velocity.x+=(tx-ballBody.position.x)*steerK*dt; }
+    if(bigBall){
+      if(ballBody.position.x>laneHalfW){ ballBody.position.x=laneHalfW; if(ballBody.velocity.x>0) ballBody.velocity.x=0; }
+      else if(ballBody.position.x<-laneHalfW){ ballBody.position.x=-laneHalfW; if(ballBody.velocity.x<0) ballBody.velocity.x=0; }
+      if(ballBody.position.y>ballRadius+0.05){ ballBody.position.y=ballRadius; if(ballBody.velocity.y>0) ballBody.velocity.y=0; }   // don't ride over pins
+      const bx=ballBody.position.x, bz=ballBody.position.z, rr=(ballRadius+0.13)*(ballRadius+0.13);   // crush pins in its path
+      for(const p of pins){ if(p.down||!p.body) continue; const dx=p.body.position.x-bx, dz=p.body.position.z-bz; if(dx*dx+dz*dz<rr){ p.body.wakeUp(); p.body.velocity.set(dx*8,3,(ballBody.velocity.z*0.3)-2); p.body.angularVelocity.set(rnd(-10,10),rnd(-10,10),rnd(-10,10)); } }
+    }
     if(acc && !accTriggered && ballBody.position.z < HEAD_Z+6) triggerAccident();
     if(accTriggered){ updateAccident(dt); }
-    else if(MP.active && MP.spectating){ if(rollT>0.7 && (bodiesRested()||ballBody.position.z<BACK_Z+0.4)){ settleT+=dt; if(settleT>0.3){ settleT=0; phase='wait'; camMode='pins'; } } else settleT=0; if(rollT>6){ phase='wait'; camMode='pins'; } }
+    else if(MP.active && MP.spectating){ if(rollT>0.7 && (bodiesRested()||ballBody.position.z<pinsBackZ-0.5)){ settleT+=dt; if(settleT>0.3){ settleT=0; phase='wait'; camMode='pins'; } } else settleT=0; if(rollT>4.5){ phase='wait'; camMode='pins'; } }
     else {
-      if(rollT>0.7 && (bodiesRested()||ballBody.position.z<BACK_Z+0.4)){ settleT+=dt; if(settleT>0.35){ settleT=0; resolveBall(); } } else settleT=0;
-      if(rollT>6){ settleT=0; resolveBall(); }
+      if(rollT>0.7 && (bodiesRested()||ballBody.position.z<pinsBackZ-0.5)){ settleT+=dt; if(settleT>0.35){ settleT=0; resolveBall(); } } else settleT=0;
+      if(rollT>4.5){ settleT=0; resolveBall(); }
     }
   }
   world.step(1/60, dt, 4); syncMeshes();
@@ -797,9 +821,9 @@ function runPlaying(){ hud.classList.add('hidden'); lobby.classList.add('hidden'
   else { MP.bowling=false; MP.spectating=true; spectate(t); } }
 // ---- spectating: watch the active player's throw live ----
 function mpWriteLive(aim,power){ const stand=pins.map((p,i)=>p.down?-1:i).filter(i=>i>=0);
-  mpUpdate({ live:{ by:MP.id, seq:Date.now()+'_'+Math.floor(Math.random()*1e4), aim:aim, power:power, acc:acc||null, stand:stand } }); }
+  mpUpdate({ live:{ by:MP.id, seq:Date.now()+'_'+Math.floor(Math.random()*1e4), aim:aim, power:power, acc:acc||null, big:!!bigBall, stand:stand } }); }
 function setupRackTo(stand){ resetRack(); const keep=new Set(stand||[0,1,2,3,4,5,6,7,8,9]); for(let i=0;i<pins.length;i++){ if(!keep.has(i)){ pins[i].down=true; removePinObjects(pins[i]); } } }
-function mpReplay(live, thrower){ mpReplaying=true; steerK=0; ballRadius=0.135; buildBall(thrower.isTrevor?ballMatTrevor:ballMatHuman);
+function mpReplay(live, thrower){ mpReplaying=true; steerK=0; bigBall=!!live.big; ballRadius=bigBall?0.405:0.135; buildBall(thrower.isTrevor?ballMatTrevor:ballMatHuman);
   setupRackTo(live.stand); placeBall(); launch(live.aim||0, live.power==null?0.7:live.power, live.acc||null); mpReplaying=false; }
 function spectate(t){ mpTurn.textContent = t?('👀 Watching '+t.name):'Watching…';
   const live=MP.doc&&MP.doc.live;
@@ -836,6 +860,20 @@ $('startMpBtn').addEventListener('click',startMpGame);
 $('leaveBtn').addEventListener('click',leaveSession);
 $('copyBtn').addEventListener('click',async()=>{ try{ await navigator.clipboard.writeText(linkBox.value); }catch(e){ try{ linkBox.select(); document.execCommand('copy'); }catch(x){} } $('copyBtn').textContent='Copied!'; setTimeout(()=>$('copyBtn').textContent='Copy',1500); });
 mpName.addEventListener('keydown',e=>{ if(e.key==='Enter'){ pendingJoin?joinSession():createSession(); } });
+
+// ---- leaderboard viewer (from the start screen) ----
+function renderListInto(list, status){
+  $('lbViewTitle').innerHTML='🏆 Top Bowlers'+(status?' <span style="opacity:.55;font-weight:600">'+status+'</span>':'');
+  $('lbList').innerHTML = list.length ? list.slice(0,12).map((row,i)=>`<div class="lbRow"><div class="lbPos">${i===0?'👑':'#'+(i+1)}</div><div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div><div class="lbScore">${Number(row.score).toLocaleString()}</div></div>`).join('') : '<div class="subtitle" style="margin:12px 0;">No scores yet — be the first! 🎳</div>';
+}
+function viewLeaderboard(){ startScreen.classList.add('hidden'); resultScreen.classList.add('hidden'); $('lbScreen').classList.remove('hidden');
+  renderListInto(aggregate(getLocalRaw()), FIREBASE_CONFIG?'· connecting…':'· this device');
+  if(!FIREBASE_CONFIG) return;
+  (async()=>{ const ok=await initOnline(); if(!ok){ renderListInto(aggregate(getLocalRaw()),'· offline'); return; }
+    try{ renderListInto(aggregate(await fetchOnlineRaw()),'· worldwide 🌐'); }catch(e){ renderListInto(aggregate(getLocalRaw()),'· offline'); } })();
+}
+$('lbBtn').addEventListener('click', viewLeaderboard);
+$('lbBack').addEventListener('click', ()=>{ $('lbScreen').classList.add('hidden'); startScreen.classList.remove('hidden'); });
 
 // ============================================================
 //  Resize + boot
