@@ -456,10 +456,28 @@ const FIREBASE_CONFIG = {
   appId: "1:945713277379:web:efdb703fdfa15a739db576"
 };
 const SCORES_COLLECTION='scores';
-let myCid='', db=null, onlineState='off';
+let db=null, onlineState='off';
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function getLocalBoard(){ try{ return JSON.parse(localStorage.getItem('tb_leaderboard')||'[]'); }catch(e){ return []; } }
-function addLocal(e){ const l=getLocalBoard(); l.push(e); l.sort((a,b)=>b.score-a.score); const t=l.slice(0,50); try{ localStorage.setItem('tb_leaderboard',JSON.stringify(t)); }catch(x){} return t; }
+
+// Cumulative, case-insensitive leaderboard: sum every game a name has played.
+// Each game is stored as its own row; we group by lower-cased name on read.
+function aggregate(raw){
+  const map=new Map();
+  for(const e of raw){
+    const key=String(e.name||'').trim().toLowerCase(); if(!key) continue;
+    let g=map.get(key);
+    if(!g){ g={_k:key, name:e.name, score:0, trevor:false, ts:-1}; map.set(key,g); }
+    g.score += Number(e.score)||0;
+    if(e.trevor) g.trevor=true;
+    if((e.ts||0) >= g.ts){ g.ts=e.ts||0; g.name=e.name; }   // display the latest spelling used
+  }
+  return [...map.values()].sort((a,b)=> b.score - a.score);
+}
+
+// device-local raw game log (instant + offline fallback)
+function getLocalRaw(){ try{ return JSON.parse(localStorage.getItem('tb_games')||'[]'); }catch(e){ return []; } }
+function addLocalRaw(e){ const l=getLocalRaw(); l.push(e); const t=l.slice(-800); try{ localStorage.setItem('tb_games',JSON.stringify(t)); }catch(x){} return t; }
+
 function renderBoard(list, youKey, status){
   lbTitle.innerHTML='🏆 Leaderboard'+(status?' <span style="opacity:.55;font-weight:600">'+status+'</span>':'');
   leaderboard.innerHTML=list.slice(0,8).map((row,i)=>{
@@ -478,17 +496,20 @@ async function initOnline(){
     firebase.initializeApp(FIREBASE_CONFIG); db=firebase.firestore(); onlineState='ready'; return true;
   }catch(e){ onlineState='error'; return false; }
 }
-async function submitOnline(e){ await db.collection(SCORES_COLLECTION).add({name:e.name,score:e.score,trevor:e.trevor,cid:e._k,ts:Date.now()}); }
-async function fetchOnline(){ const s=await db.collection(SCORES_COLLECTION).orderBy('score','desc').limit(50).get(); return s.docs.map(d=>{const x=d.data();return{name:x.name,score:x.score,trevor:!!x.trevor,_k:x.cid};}); }
+async function submitOnline(e){ await db.collection(SCORES_COLLECTION).add({name:e.name, score:e.score, trevor:e.trevor, ts:e.ts}); }
+async function fetchOnlineRaw(){
+  const s=await db.collection(SCORES_COLLECTION).limit(5000).get();
+  return s.docs.map(d=>{ const x=d.data(); return {name:x.name, score:x.score, trevor:!!x.trevor, ts:x.ts||0}; });
+}
 function recordAndShow(){
-  myCid='k_'+Math.floor(performance.now())+'_'+Math.floor(Math.random()*1e6);
-  const entry={name:playerName,score:totalScore,trevor:isTrevor,_k:myCid};
-  const local=addLocal(entry);
-  renderBoard(local, myCid, FIREBASE_CONFIG?'· connecting…':'· this device');
+  const youKey=String(playerName).trim().toLowerCase();
+  const game={name:playerName, score:totalScore, trevor:isTrevor, ts:Date.now()};
+  const localBoard=aggregate(addLocalRaw(game));
+  renderBoard(localBoard, youKey, FIREBASE_CONFIG?'· connecting…':'· this device');
   if(!FIREBASE_CONFIG) return;
-  (async()=>{ const ok=await initOnline(); if(!ok){ renderBoard(local,myCid,'· offline'); return; }
-    try{ await submitOnline(entry); renderBoard(await fetchOnline(), myCid, '· worldwide 🌐'); }
-    catch(err){ renderBoard(local,myCid,'· offline'); } })();
+  (async()=>{ const ok=await initOnline(); if(!ok){ renderBoard(localBoard, youKey, '· offline'); return; }
+    try{ await submitOnline(game); renderBoard(aggregate(await fetchOnlineRaw()), youKey, '· worldwide 🌐'); }
+    catch(err){ renderBoard(localBoard, youKey, '· offline'); } })();
 }
 
 // ============================================================
