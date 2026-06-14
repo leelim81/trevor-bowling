@@ -233,11 +233,13 @@ const rnd=(a,b)=>a+Math.random()*(b-a);
 // ============================================================
 const LANE_HALF_W=0.55, GUTTER_W=0.18, HEAD_Z=-13.0, ROW_DZ=-0.30;
 let laneHalfW=LANE_HALF_W;   // current playable half-width (grows per frame later)
-let pinsBackZ=HEAD_Z+3*ROW_DZ;   // z of the deepest pin row (used to resolve once the ball is past)
-const BACK_Z=HEAD_Z+4*ROW_DZ-1.2, PIN_H=0.38, PIN_HW=0.058, START_Z=-0.3;
-const PIN_LAYOUT=[[0,0],[-0.1525,1],[0.1525,1],[-0.305,2],[0,2],[0.305,2],[-0.4575,3],[-0.1525,3],[0.1525,3],[0.4575,3]]
-  .map(([x,row])=>({x, z:HEAD_Z+row*ROW_DZ}));
-const laneLen=(START_Z+0.8)-(BACK_Z), laneCenterZ=(START_Z+0.8+BACK_Z)/2;
+let pinsBackZ=HEAD_Z+3*ROW_DZ;   // z of the deepest pin row (set per frame)
+const PIN_H=0.38, PIN_HW=0.058, START_Z=-0.3, PIN_SX=0.305, PIN_DZ=ROW_DZ;
+const laneCenterZ=-7;            // representative point for end-of-game confetti
+// Progressive rack: frame N has rows 1..(N+3); row r has r pins. Frame1=10 (rows1-4), 2=15, 3=21, … 10=91.
+function rackForFrame(N){ const rows=N+3, specs=[]; for(let r=1;r<=rows;r++){ const z=HEAD_Z+(r-1)*PIN_DZ; for(let i=0;i<r;i++) specs.push({x:(i-(r-1)/2)*PIN_SX, z}); } return specs; }
+function laneHalfWidth(N){ return ((N+2)/2)*PIN_SX + 0.10; }   // fits the widest (back) row
+function frameBackZ(N){ return HEAD_Z+(N+2)*PIN_DZ - 1.3; }     // back wall behind the deepest row
 
 // ============================================================
 //  Scoring + opponents
@@ -271,7 +273,7 @@ renderer.outputColorSpace=THREE.SRGBColorSpace; renderer.toneMapping=THREE.ACESF
 
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x07090f);
-scene.fog=new THREE.Fog(0x07090f, 14, 34);
+scene.fog=new THREE.Fog(0x07090f, 16, 55);
 
 const camera=new THREE.PerspectiveCamera(58, innerWidth/innerHeight, 0.1, 140);
 let camPos=new THREE.Vector3(0,1.6,3.0), camLook=new THREE.Vector3(0,0.5,-6);
@@ -327,61 +329,46 @@ function maskingTexture(){
   g.fillStyle='#ffd24a'; g.shadowColor='#ffaa00'; g.shadowBlur=24; g.fillText("TREVOR LANES",256,84);
   const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t;
 }
-function buildAlley(){
-  // physics
-  addStaticBox(LANE_HALF_W,0.25,laneLen/2, 0,-0.25,laneCenterZ, mLane);
-  addStaticBox(GUTTER_W,0.12,laneLen/2, LANE_HALF_W+GUTTER_W,-0.27,laneCenterZ, mLane);
-  addStaticBox(GUTTER_W,0.12,laneLen/2,-(LANE_HALF_W+GUTTER_W),-0.27,laneCenterZ, mLane);
-  addStaticBox(0.08,0.6,laneLen/2, LANE_HALF_W+2*GUTTER_W,0.3,laneCenterZ, mWall);
-  addStaticBox(0.08,0.6,laneLen/2,-(LANE_HALF_W+2*GUTTER_W),0.3,laneCenterZ, mWall);
-  addStaticBox(LANE_HALF_W+2*GUTTER_W,0.8,0.2, 0,0.4,BACK_Z, mWall);
-
-  // lane surface
-  const tex=woodTexture(false); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.repeat.set(1,laneLen/3.0);
-  const lane=new THREE.Mesh(new THREE.PlaneGeometry(LANE_HALF_W*2,laneLen), new THREE.MeshStandardMaterial({map:tex,roughness:0.32}));
-  lane.rotation.x=-Math.PI/2; lane.position.set(0,0.001,laneCenterZ); lane.receiveShadow=true; scene.add(lane);
+// ---- per-frame lane (rebuilt as the rack grows wider & deeper) ----
+let laneObjs=[], laneBodies=[], builtFrame=-1;
+function clearLane(){ for(const m of laneObjs){ scene.remove(m); if(m.geometry)m.geometry.dispose(); if(m.material){ if(m.material.map)m.material.map.dispose(); m.material.dispose(); } } laneObjs=[]; for(const b of laneBodies) world.removeBody(b); laneBodies=[]; }
+function buildLane(halfW, backZ){
+  clearLane();
+  const frontZ=START_Z+0.8, len=frontZ-backZ, cz=(frontZ+backZ)/2;
+  const P=(hx,hy,hz,x,y,z,m)=>laneBodies.push(addStaticBox(hx,hy,hz,x,y,z,m)), M=(m)=>{ scene.add(m); laneObjs.push(m); return m; };
+  P(halfW,0.25,len/2, 0,-0.25,cz, mLane);
+  P(GUTTER_W,0.12,len/2, halfW+GUTTER_W,-0.27,cz, mLane);
+  P(GUTTER_W,0.12,len/2,-(halfW+GUTTER_W),-0.27,cz, mLane);
+  P(0.08,0.6,len/2, halfW+2*GUTTER_W,0.3,cz, mWall);
+  P(0.08,0.6,len/2,-(halfW+2*GUTTER_W),0.3,cz, mWall);
+  P(halfW+2*GUTTER_W,0.8,0.2, 0,0.4,backZ, mWall);
+  const tex=woodTexture(false); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.repeat.set(Math.max(1,Math.round(halfW/0.55)), Math.max(1,Math.round(len/3)));
+  const lane=new THREE.Mesh(new THREE.PlaneGeometry(halfW*2,len), new THREE.MeshStandardMaterial({map:tex,roughness:0.32})); lane.rotation.x=-Math.PI/2; lane.position.set(0,0.001,cz); lane.receiveShadow=true; M(lane);
   const gMat=new THREE.MeshStandardMaterial({color:0x14181f,roughness:0.5,metalness:0.2});
-  for(const s of[-1,1]){ const gu=new THREE.Mesh(new THREE.BoxGeometry(GUTTER_W,0.04,laneLen),gMat); gu.position.set(s*(LANE_HALF_W+GUTTER_W),-0.08,laneCenterZ); gu.receiveShadow=true; scene.add(gu); }
+  for(const s of[-1,1]){ const gu=new THREE.Mesh(new THREE.BoxGeometry(GUTTER_W,0.04,len),gMat); gu.position.set(s*(halfW+GUTTER_W),-0.08,cz); gu.receiveShadow=true; M(gu); }
   const rMat=new THREE.MeshStandardMaterial({color:0x2a2118,roughness:0.6});
-  for(const s of[-1,1]){ const r=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.18,laneLen),rMat); r.position.set(s*(LANE_HALF_W+2*GUTTER_W),0.06,laneCenterZ); r.castShadow=r.receiveShadow=true; scene.add(r); }
-  const deck=new THREE.Mesh(new THREE.PlaneGeometry(LANE_HALF_W*2,1.6), new THREE.MeshStandardMaterial({color:0xb98f4e,roughness:0.45}));
-  deck.rotation.x=-Math.PI/2; deck.position.set(0,0.002,HEAD_Z+1.5*ROW_DZ); scene.add(deck);
-  buildEnvironment();
+  for(const s of[-1,1]){ const r=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.18,len),rMat); r.position.set(s*(halfW+2*GUTTER_W),0.06,cz); r.castShadow=r.receiveShadow=true; M(r); }
+  const deck=new THREE.Mesh(new THREE.PlaneGeometry(halfW*2,(HEAD_Z-backZ)+0.6), new THREE.MeshStandardMaterial({color:0xb98f4e,roughness:0.45})); deck.rotation.x=-Math.PI/2; deck.position.set(0,0.002,(HEAD_Z+backZ)/2+0.2); M(deck);
+  const back=new THREE.Mesh(new THREE.BoxGeometry(halfW*2+4*GUTTER_W,2.6,0.3), new THREE.MeshStandardMaterial({color:0x0e1320,roughness:0.7})); back.position.set(0,1.3,backZ-0.12); back.receiveShadow=true; M(back);
+  const sign=new THREE.Mesh(new THREE.PlaneGeometry(Math.min(halfW*2+3*GUTTER_W,4.2),0.62), new THREE.MeshBasicMaterial({map:maskingTexture(),transparent:true})); sign.position.set(0,1.9,backZ+0.05); M(sign);
+  const trim=new THREE.Mesh(new THREE.BoxGeometry(halfW*2+4*GUTTER_W,0.06,0.06), new THREE.MeshStandardMaterial({color:0xff7ad0,emissive:0xd61f8f,emissiveIntensity:1.3})); trim.position.set(0,1.5,backZ+0.06); M(trim);
 }
+function setFrame(N){ laneHalfW=laneHalfWidth(N); pinsBackZ=HEAD_Z+(N+2)*PIN_DZ;
+  if(builtFrame!==N){ buildLane(laneHalfW, frameBackZ(N)); builtFrame=N;
+    const pc=(HEAD_Z+pinsBackZ)/2; pinLight.position.set(0,6,pc+1.2); pinLight.target.position.set(0,0,pc); pinLight.target.updateMatrixWorld();
+    key.shadow.camera.left=-(laneHalfW+0.5); key.shadow.camera.right=laneHalfW+0.5; key.shadow.camera.bottom=pinsBackZ-1; key.shadow.camera.updateProjectionMatrix(); } }
 function buildEnvironment(){
   const dark=new THREE.MeshStandardMaterial({color:0x0c1018,roughness:0.9});
   const wallMat=new THREE.MeshStandardMaterial({color:0x10151f,roughness:0.85});
-  // big floor
-  const floor=new THREE.Mesh(new THREE.PlaneGeometry(60,90), new THREE.MeshStandardMaterial({color:0x05070c,roughness:1}));
-  floor.rotation.x=-Math.PI/2; floor.position.set(0,-0.45,laneCenterZ-6); floor.receiveShadow=true; scene.add(floor);
-  // ceiling
-  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(60,90), dark);
-  ceil.rotation.x=Math.PI/2; ceil.position.set(0,4.4,laneCenterZ-6); scene.add(ceil);
-  // side walls
-  for(const s of[-1,1]){ const w=new THREE.Mesh(new THREE.BoxGeometry(0.3,5,90),wallMat); w.position.set(s*4.2,2,laneCenterZ-6); scene.add(w);
-    // neon accent strip along each side wall
-    const neon=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.12,80), new THREE.MeshStandardMaterial({color:0x49b6ff,emissive:0x1f7fd6,emissiveIntensity:1.4})); neon.position.set(s*4.0,3.1,laneCenterZ-6); scene.add(neon); }
-  // neighbouring lanes (visual hint)
-  for(const s of[-1,1]){ const nt=woodTexture(true); nt.wrapS=nt.wrapT=THREE.RepeatWrapping; nt.repeat.set(1,laneLen/3.0);
-    const nl=new THREE.Mesh(new THREE.PlaneGeometry(1.0,laneLen), new THREE.MeshStandardMaterial({map:nt,roughness:0.4}));
-    nl.rotation.x=-Math.PI/2; nl.position.set(s*2.3,-0.02,laneCenterZ); scene.add(nl);
-    const div=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.22,laneLen), new THREE.MeshStandardMaterial({color:0x20262e,roughness:0.7})); div.position.set(s*1.55,0.08,laneCenterZ); scene.add(div); }
-  // wall behind the player (enclose)
-  const backPlayer=new THREE.Mesh(new THREE.BoxGeometry(12,5,0.3), wallMat); backPlayer.position.set(0,2,START_Z+5.5); scene.add(backPlayer);
-  // ---- pin-end masking unit (back wall) ----
-  const back=new THREE.Mesh(new THREE.BoxGeometry(LANE_HALF_W*2+4*GUTTER_W,2.4,0.3), new THREE.MeshStandardMaterial({color:0x0e1320,roughness:0.7}));
-  back.position.set(0,1.2,BACK_Z-0.12); back.receiveShadow=true; scene.add(back);
-  const sign=new THREE.Mesh(new THREE.PlaneGeometry(LANE_HALF_W*2+3*GUTTER_W,0.62), new THREE.MeshBasicMaterial({map:maskingTexture(),transparent:true}));
-  sign.position.set(0,1.75,BACK_Z+0.05); scene.add(sign);
-  const trim=new THREE.Mesh(new THREE.BoxGeometry(LANE_HALF_W*2+4*GUTTER_W,0.06,0.06), new THREE.MeshStandardMaterial({color:0xff7ad0,emissive:0xd61f8f,emissiveIntensity:1.3}));
-  trim.position.set(0,1.36,BACK_Z+0.06); scene.add(trim);
-  // ---- ceiling light panels over the lane ----
+  const ecz=-9;
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(90,120), new THREE.MeshStandardMaterial({color:0x05070c,roughness:1})); floor.rotation.x=-Math.PI/2; floor.position.set(0,-0.45,ecz); floor.receiveShadow=true; scene.add(floor);
+  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(90,120), dark); ceil.rotation.x=Math.PI/2; ceil.position.set(0,4.7,ecz); scene.add(ceil);
+  for(const s of[-1,1]){ const w=new THREE.Mesh(new THREE.BoxGeometry(0.3,5.4,120),wallMat); w.position.set(s*5.8,2,ecz); scene.add(w);
+    const neon=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.12,110), new THREE.MeshStandardMaterial({color:0x49b6ff,emissive:0x1f7fd6,emissiveIntensity:1.4})); neon.position.set(s*5.6,3.3,ecz); scene.add(neon); }
+  const backPlayer=new THREE.Mesh(new THREE.BoxGeometry(16,5.4,0.3), wallMat); backPlayer.position.set(0,2,START_Z+5.5); scene.add(backPlayer);
   const panMat=new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xfff0d0,emissiveIntensity:0.9});
-  for(let i=0;i<5;i++){ const z=START_Z-2-i*2.6; const pan=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.06,0.5),panMat); pan.position.set(0,4.3,z); scene.add(pan); }
-  // ---- ball-return console beside the foul line ----
-  const ret=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,1.0), new THREE.MeshStandardMaterial({color:0x1a1f2a,roughness:0.5,metalness:0.3}));
-  ret.position.set(LANE_HALF_W+GUTTER_W+0.45,0.25,START_Z+1.0); ret.castShadow=true; scene.add(ret);
-  const retTop=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.08,1.0), new THREE.MeshStandardMaterial({color:0x2b3340,roughness:0.3,metalness:0.5})); retTop.position.set(LANE_HALF_W+GUTTER_W+0.45,0.55,START_Z+1.0); scene.add(retTop);
+  for(let i=0;i<9;i++){ const z=START_Z-2-i*2.3; const pan=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.06,0.5),panMat); pan.position.set(0,4.6,z); scene.add(pan); }
+  const ret=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,1.0), new THREE.MeshStandardMaterial({color:0x1a1f2a,roughness:0.5,metalness:0.3})); ret.position.set(3.0,0.25,START_Z+1.2); ret.castShadow=true; scene.add(ret);
 }
 
 // ---- pins ----
@@ -412,7 +399,7 @@ function newPin(spec){ const mesh=makePinMesh(); mesh.position.set(spec.x,PIN_H/
   body.linearDamping=0.02; body.angularDamping=0.07; body.allowSleep=true; body.sleepSpeedLimit=0.12; body.sleepTimeLimit=0.4; world.addBody(body);
   return {x:spec.x,z:spec.z,down:false,mesh,body}; }
 function removePinObjects(p){ if(p.mesh){ scene.remove(p.mesh); p.mesh=null; } if(p.body){ world.removeBody(p.body); p.body=null; } }
-function resetRack(){ for(const p of pins) removePinObjects(p); pins=PIN_LAYOUT.map(newPin); }
+function resetRack(){ for(const p of pins) removePinObjects(p); setFrame(round); pins=rackForFrame(round).map(newPin); }
 function removeDeadwood(){ for(const p of pins){ if(p.down) removePinObjects(p); } }
 function downCount(){ return pins.filter(p=>p.down).length; }
 function updateDownFlags(){ const up=new CANNON.Vec3(0,1,0), wu=new CANNON.Vec3();
@@ -482,33 +469,27 @@ function standardScore(r){ let s=0,i=0; for(let f=0;f<10;f++){ if(r[i]===undefin
   if(r[i]===10){ s+=10+(r[i+1]||0)+(r[i+2]||0); i+=1; }
   else if((r[i]||0)+(r[i+1]||0)===10){ s+=10+(r[i+2]||0); i+=2; }
   else { s+=(r[i]||0)+(r[i+1]||0); i+=2; } } return s; }
-function scoreOf(P){ return P.mode==='arcade'?P.arcade:standardScore(P.rolls); }
+function scoreOf(P){ return P.rolls.reduce((a,b)=>a+(b||0),0); }   // total pins knocked (cumulative)
 
 function resolveBall(){
   updateDownFlags();
   const P=players[curPlayer];
-  const startDown=pinsDownStartOfBall, down=downCount(), knocked=down-startDown;
+  const startDown=pinsDownStartOfBall, down=downCount(), knocked=down-startDown, rackSize=pins.length;
   P.rolls.push(knocked);
-  const freshRack=(startDown===0), isStrike=freshRack&&down===10, isSpare=!isStrike&&down===10;
-  let gained=knocked*PIN_POINTS;
-  if(isStrike){ P.combo++; gained+=strikeBonus(P.combo)+5000; }
-  else if(isSpare){ gained+=SPARE_BONUS; P.combo=1; }
-  else P.combo=0;
-  P.arcade+=gained; P.score=scoreOf(P);
-
-  if(isStrike){ flash(P.combo>1?('STRIKE! x'+P.combo):'STRIKE!','#ffd24a'); burstConfetti(0,1.5,HEAD_Z+0.4,150); shake=0.22; sound.applause(1); }
-  else if(isSpare){ flash('SPARE!','#7fe3ff'); burstConfetti(0,1.3,HEAD_Z+0.4,90); shake=0.12; sound.applause(0.6); }
-  else if(knocked>0) flash(knocked+(knocked===1?' pin':' pins'),'#fff',true);
+  const freshRack=(startDown===0), cleared=(down===rackSize), isStrike=freshRack&&cleared, isSpare=!isStrike&&cleared;
+  P.score=scoreOf(P);
+  const pc=(HEAD_Z+pinsBackZ)/2;
+  if(isStrike){ flash('STRIKE! +'+knocked,'#ffd24a'); burstConfetti(0,1.7,pc,200); shake=0.26; sound.applause(1); sound.crash(); }
+  else if(isSpare){ flash('SPARE! +'+knocked,'#7fe3ff'); burstConfetti(0,1.5,pc,130); shake=0.14; sound.applause(0.6); }
+  else if(knocked>0){ flash('+'+knocked+(knocked===1?' pin':' pins'),'#fff',true); if(knocked>=4) sound.crash(); }
   else flash('gutter','#9fb3cc',true);
   updateHUD();
   if(MP.active){ mpLiveScore={id:MP.id,score:players[0].score}; renderMpBar(); }
 
   phase='wait'; camMode='pins';
-  if(round<10){
-    if(isStrike) setTimeout(endTurn,1300);
-    else if(ballNum===1) setTimeout(()=>{ removeDeadwood(); ballNum=2; placeBall(); resumeTurn(P); },1000);
-    else setTimeout(endTurn,1000);
-  } else advanceTenth(P);
+  if(isStrike) setTimeout(endTurn,1200);
+  else if(ballNum===1) setTimeout(()=>{ removeDeadwood(); ballNum=2; placeBall(); resumeTurn(P); },1000);
+  else setTimeout(endTurn,1000);
 }
 function resumeTurn(P){ updateHUD(); if(P.isCPU){ phase='cpuwait'; camMode='aim'; setTimeout(cpuThrow,750); } else { camMode='aim'; phase='aim'; showAim(); } }
 function advanceTenth(P){
@@ -627,11 +608,11 @@ function recordAndShow(name, score, trevor){
 // ============================================================
 const desiredPos=new THREE.Vector3(), desiredLook=new THREE.Vector3();
 function updateCamera(dt){
-  const b=ballBody.position;
-  if(camMode==='aim'){ desiredPos.set(b.x*0.4,1.55,START_Z+3.0); desiredLook.set(b.x*0.5,0.55,HEAD_Z*0.5); }
-  else if(camMode==='roll'){ if(b.z>HEAD_Z+3){ desiredPos.set(b.x*0.5,1.15,b.z+2.6); desiredLook.set(b.x*0.7,0.45,b.z-6); }
-    else { desiredPos.set(b.x*0.4,2.2,HEAD_Z+4.2); desiredLook.set(0,0.45,HEAD_Z-0.4); } }
-  else if(camMode==='pins'){ desiredPos.set(0,2.3,HEAD_Z+4.0); desiredLook.set(0,0.45,HEAD_Z-0.5); }
+  const b=ballBody.position, pc=(HEAD_Z+pinsBackZ)/2, w=laneHalfW;
+  if(camMode==='aim'){ desiredPos.set(b.x*0.4,1.55+w*0.55,START_Z+3.0+w*1.3); desiredLook.set(b.x*0.4,0.5,pc*0.5); }
+  else if(camMode==='roll'){ if(b.z>HEAD_Z+3){ desiredPos.set(b.x*0.5,1.15+w*0.3,b.z+2.6); desiredLook.set(b.x*0.6,0.45,b.z-6); }
+    else { desiredPos.set(0,2.2+w*0.7,pc+5.5); desiredLook.set(0,0.45,pc); } }
+  else if(camMode==='pins'){ desiredPos.set(0,2.3+w*0.8,pc+5.5); desiredLook.set(0,0.45,pc); }
   else if(camMode==='sky'){ desiredPos.set(0,1.7,START_Z+3.2); desiredLook.set(ballMesh.position.x,ballMesh.position.y,ballMesh.position.z); }
   else if(camMode==='floor'){ desiredPos.set(ballMesh.position.x*0.4,2.0,ballMesh.position.z+2.6); desiredLook.set(ballMesh.position.x,Math.max(ballMesh.position.y,-1.5),ballMesh.position.z); }
   const k=1-Math.exp(-dt*((camMode==='sky'||camMode==='floor')?9:4.5)); camPos.lerp(desiredPos,k); camLook.lerp(desiredLook,k);
@@ -804,7 +785,7 @@ function leaveSession(){ if(MP.unsub){ MP.unsub(); MP.unsub=null; } MP.active=fa
   startScreen.classList.remove('hidden'); phase='start'; }
 async function mpUpdate(o){ try{ await db.collection('sessions').doc(MP.code).update(o); }catch(e){} }
 
-function mpScore(p){ return standardScore(MP.rolls[p.id]||[]); }   // fair standard scoring for all
+function mpScore(p){ return (MP.rolls[p.id]||[]).reduce((a,b)=>a+(b||0),0); }   // total pins knocked
 function applyDoc(d){ MP.doc=d; MP.players=d.players||[]; MP.turnIndex=d.turnIndex||0; MP.round=d.round||1; MP.status=d.status; MP.rolls=d.rolls||{}; MP.arcades=d.arcades||{}; MP.combos=d.combos||{};
   if(d.status==='lobby') showLobby(); else if(d.status==='playing') runPlaying(); else if(d.status==='done') mpResults(); }
 
@@ -823,7 +804,7 @@ function runPlaying(){ hud.classList.add('hidden'); lobby.classList.add('hidden'
 function mpWriteLive(aim,power){ const stand=pins.map((p,i)=>p.down?-1:i).filter(i=>i>=0);
   mpUpdate({ live:{ by:MP.id, seq:Date.now()+'_'+Math.floor(Math.random()*1e4), aim:aim, power:power, acc:acc||null, big:!!bigBall, stand:stand } }); }
 function setupRackTo(stand){ resetRack(); const keep=new Set(stand||[0,1,2,3,4,5,6,7,8,9]); for(let i=0;i<pins.length;i++){ if(!keep.has(i)){ pins[i].down=true; removePinObjects(pins[i]); } } }
-function mpReplay(live, thrower){ mpReplaying=true; steerK=0; bigBall=!!live.big; ballRadius=bigBall?0.405:0.135; buildBall(thrower.isTrevor?ballMatTrevor:ballMatHuman);
+function mpReplay(live, thrower){ mpReplaying=true; round=MP.round; steerK=0; bigBall=!!live.big; ballRadius=bigBall?0.405:0.135; buildBall(thrower.isTrevor?ballMatTrevor:ballMatHuman);
   setupRackTo(live.stand); placeBall(); launch(live.aim||0, live.power==null?0.7:live.power, live.acc||null); mpReplaying=false; }
 function spectate(t){ mpTurn.textContent = t?('👀 Watching '+t.name):'Watching…';
   const live=MP.doc&&MP.doc.live;
@@ -881,7 +862,7 @@ $('lbBack').addEventListener('click', ()=>{ $('lbScreen').classList.add('hidden'
 function resize(){ const w=innerWidth,h=innerHeight; renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); }
 addEventListener('resize',resize); addEventListener('orientationchange',resize);
 
-buildAlley(); initAccidents(); initConfetti(); initTrail(); buildBall(ballMatHuman); resetRack(); resize();
+buildEnvironment(); initAccidents(); initConfetti(); initTrail(); buildBall(ballMatHuman); resetRack(); resize();
 loadingEl.classList.add('hidden');
 { const jc=new URLSearchParams(location.search).get('s'); if(jc) openOnline(jc.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5)); else startScreen.classList.remove('hidden'); }
 animate();
