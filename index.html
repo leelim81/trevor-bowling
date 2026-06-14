@@ -636,7 +636,9 @@ function initAccidents(){
   shp.moveTo(p[0][0],p[0][1]); for(let i=1;i<N;i++) shp.lineTo(p[i][0],p[i][1]); shp.closePath();
   crackMesh=new THREE.Mesh(new THREE.ShapeGeometry(shp), new THREE.MeshBasicMaterial({color:0x04050a})); crackMesh.rotation.x=-Math.PI/2; crackMesh.position.y=0.02; crackMesh.visible=false; scene.add(crackMesh);
 }
-function rollAccident(P){ if(!ACCIDENTS_ON || !P || P.isTrevor) return null; const r=Math.random(); return r<0.10?'sky':(r<0.20?'floor':null); }
+function rollAccident(P){ if(!ACCIDENTS_ON || !P) return null; const r=Math.random();
+  if(P.isTrevor) return r<0.02?'sky':(r<0.04?'floor':null);   // Trevor: 2% each (sky / floor)
+  return r<0.10?'sky':(r<0.20?'floor':null); }                // everyone else: 10% each
 function armAccident(a){ acc=a||null; accTriggered=false; accStage=0; accT=0; }
 function triggerAccident(){ accTriggered=true; accStage=1; accT=0;
   if(acc==='sky'){ ballBody.velocity.set(rnd(-1.2,1.2),8.2,4.4); ballBody.angularVelocity.set(rnd(-6,6),rnd(-6,6),rnd(-6,6)); camMode='sky'; sound.whoosh(); flash('WHOA!','#9fe0ff',true); }
@@ -673,7 +675,7 @@ function tick(dt){
   if(phase==='rolling'){
     rollT+=dt; spawnTrail();
     if(steerK>1){ const tx=0.02; ballBody.velocity.x+=(tx-ballBody.position.x)*steerK*dt; }
-    if(bigBall){
+    if(bigBall && !accTriggered){
       if(ballBody.position.x>laneHalfW){ ballBody.position.x=laneHalfW; if(ballBody.velocity.x>0) ballBody.velocity.x=0; }
       else if(ballBody.position.x<-laneHalfW){ ballBody.position.x=-laneHalfW; if(ballBody.velocity.x<0) ballBody.velocity.x=0; }
       if(ballBody.position.y>ballRadius+0.05){ ballBody.position.y=ballRadius; if(ballBody.velocity.y>0) ballBody.velocity.y=0; }   // don't ride over pins
