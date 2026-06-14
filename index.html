@@ -125,8 +125,8 @@
     <div style="margin-top:12px;"><button class="onlinebtn" id="onlineBtn">🌐 Play Online with Friends</button></div>
     <div class="howto">
       <b>Slide</b> up the screen to bowl — aim left/right to curve.<br>
-      Play as <b>Trevor</b> for magic strike powers 👑<br>
-      Everyone else plays real bowling (max 300)!
+      Real ten-pin scoring — strikes &amp; spares, max 300.<br>
+      Best score wins! 🎳
     </div>
   </div>
 </div>
@@ -240,7 +240,7 @@ let selSkill='medium';
 
 function freshPlayer(name, isTrevor, isCPU, skill){
   return { name, isTrevor, isCPU, skill, rolls:[], arcade:0, combo:0, tenthStart:0, score:0,
-           mode:isTrevor?'arcade':'std', ranks:isTrevor?RANKS_TREVOR:RANKS_STD };
+           mode:'std', ranks:RANKS_STD };   // everyone plays fair standard ten-pin (max 300)
 }
 
 // ============================================================
@@ -502,9 +502,8 @@ function advanceTenth(P){
 function endTurn(){ if(MP.active){ mpEndMyFrame(); return; } curPlayer++; if(curPlayer>=players.length){ curPlayer=0; round++; } if(round>10){ endGame(); return; } startTurn(); }
 
 function configureBallFor(P){
-  steerK = P.isTrevor?7.0:0;
-  ballRadius = P.isTrevor?0.16:0.135;
-  buildBall(P.isTrevor?ballMatTrevor:(P.isCPU?ballMatCPU:ballMatHuman));
+  steerK = 0; ballRadius = 0.135;          // fair physics for everyone — no magic ball / auto-steer
+  buildBall(P.isTrevor?ballMatTrevor:(P.isCPU?ballMatCPU:ballMatHuman));  // gold ball is cosmetic only now
 }
 function startTurn(){
   const P=players[curPlayer];
@@ -551,8 +550,8 @@ function endGame(){
   const r=rankFor(human); finalRank.innerHTML=`<span style="opacity:.7;font-weight:600;font-size:13px">${escapeHtml(human.name)} rank</span><br>${r.gem} <span style="color:${r.color}">${r.name}</span>`;
   // leaderboard (submit the human only)
   recordAndShow(human.name, human.score, human.isTrevor);
-  let best=0; try{ best=parseInt(localStorage.getItem('tb_best')||'0',10)||0; }catch(e){}
-  if(human.score>best){ best=human.score; try{ localStorage.setItem('tb_best',String(best)); }catch(e){} }
+  let best=0; try{ best=parseInt(localStorage.getItem('tb_best2')||'0',10)||0; }catch(e){}
+  if(human.score>best){ best=human.score; try{ localStorage.setItem('tb_best2',String(best)); }catch(e){} }
   bestLine.textContent='⭐ Best on this device: '+best.toLocaleString();
   resultScreen.classList.remove('hidden'); burstConfetti(0,2.4,laneCenterZ+3,180); sound.applause(1.2);
 }
@@ -569,10 +568,11 @@ const FIREBASE_CONFIG = {
   appId: "1:945713277379:web:efdb703fdfa15a739db576"
 };
 const SCORES_COLLECTION='scores';
+const SEASON_START=1781443930000;   // leaderboard reset: only games on/after this count
 let db=null, onlineState='off';
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function aggregate(raw){ const map=new Map();
-  for(const e of raw){ const key=String(e.name||'').trim().toLowerCase(); if(!key) continue; let g=map.get(key);
+  for(const e of raw){ if((e.ts||0) < SEASON_START) continue; const key=String(e.name||'').trim().toLowerCase(); if(!key) continue; let g=map.get(key);
     if(!g){ g={_k:key,name:e.name,score:0,trevor:false,ts:-1}; map.set(key,g); }
     g.score+=Number(e.score)||0; if(e.trevor) g.trevor=true; if((e.ts||0)>=g.ts){ g.ts=e.ts||0; g.name=e.name; } }
   return [...map.values()].sort((a,b)=>b.score-a.score); }
@@ -721,7 +721,7 @@ function leaveSession(){ if(MP.unsub){ MP.unsub(); MP.unsub=null; } MP.active=fa
   startScreen.classList.remove('hidden'); phase='start'; }
 async function mpUpdate(o){ try{ await db.collection('sessions').doc(MP.code).update(o); }catch(e){} }
 
-function mpScore(p){ return p.isTrevor ? (MP.arcades[p.id]||0) : standardScore(MP.rolls[p.id]||[]); }
+function mpScore(p){ return standardScore(MP.rolls[p.id]||[]); }   // fair standard scoring for all
 function applyDoc(d){ MP.doc=d; MP.players=d.players||[]; MP.turnIndex=d.turnIndex||0; MP.round=d.round||1; MP.status=d.status; MP.rolls=d.rolls||{}; MP.arcades=d.arcades||{}; MP.combos=d.combos||{};
   if(d.status==='lobby') showLobby(); else if(d.status==='playing') runPlaying(); else if(d.status==='done') mpResults(); }
 
