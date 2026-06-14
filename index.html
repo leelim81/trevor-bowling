@@ -69,6 +69,21 @@
   .lbName{ flex:1; font-weight:700; } .lbScore{ font-weight:800; font-variant-numeric:tabular-nums; }
   .best{ margin-top:6px; font-size:13px; opacity:.7; } .footnote{ margin-top:12px; font-size:11px; opacity:.45; }
   #loading{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#06080e; z-index:20; color:#9fb3cc; font-weight:700; letter-spacing:.05em; }
+  /* online */
+  .onlinebtn{ pointer-events:auto; cursor:pointer; background:rgba(255,255,255,.08); border:1.5px solid rgba(255,255,255,.2); color:#fff; font-family:inherit; font-weight:800; font-size:15px; padding:11px 18px; border-radius:13px; transition:.12s; }
+  .onlinebtn:active{ transform:translateY(2px); }
+  #mpName{ display:block; width:100%; max-width:300px; margin:0 auto 14px; text-align:center; font-family:inherit; font-size:20px; font-weight:800; color:#fff; padding:13px 16px; border-radius:14px; outline:none; background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.18); }
+  #mpName::placeholder{ color:rgba(255,255,255,.4); font-weight:600; }
+  #mpName:focus{ border-color:var(--gold); }
+  .linkRow{ display:flex; gap:6px; max-width:340px; margin:6px auto 0; }
+  #linkBox{ flex:1; font-family:inherit; font-size:12px; padding:11px 10px; border-radius:11px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:#cfe3ff; }
+  #mpHud{ position:fixed; inset:0; pointer-events:none; z-index:2; }
+  .mpStrip{ position:absolute; top:max(8px,env(safe-area-inset-top)); left:0; right:0; display:flex; gap:6px; justify-content:center; flex-wrap:wrap; padding:0 10px; }
+  .mpChip{ background:rgba(10,16,26,.62); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:6px 10px; text-align:center; min-width:66px; backdrop-filter:blur(6px); }
+  .mpChip.active{ border-color:var(--gold); box-shadow:0 0 16px rgba(255,210,74,.4); }
+  .mpChip .n{ font-size:11px; font-weight:800; max-width:84px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mpChip .s{ font-size:18px; font-weight:900; font-variant-numeric:tabular-nums; }
+  .vs{ flex-wrap:wrap; }
 </style>
 <script type="importmap">
 { "imports": { "three": "./lib/three.module.js", "cannon-es": "./lib/cannon-es.js" } }
@@ -107,6 +122,7 @@
       <button class="diff" data-skill="hard">🔥 Hard</button>
     </div>
     <button class="bigbtn" id="startBtn">▶ PLAY</button>
+    <div style="margin-top:12px;"><button class="onlinebtn" id="onlineBtn">🌐 Play Online with Friends</button></div>
     <div class="howto">
       <b>Slide</b> up the screen to bowl — aim left/right to curve.<br>
       Play as <b>Trevor</b> for magic strike powers 👑<br>
@@ -127,6 +143,53 @@
     <div class="best" id="bestLine"></div>
     <button class="bigbtn" id="againBtn" style="margin-top:14px;">↻ PLAY AGAIN</button>
     <div class="footnote">Made for Trevor 💛</div>
+  </div>
+</div>
+
+<!-- Online: create / join -->
+<div id="onlinePanel" class="overlay hidden">
+  <div class="card">
+    <div class="pc-crown" style="font-size:40px;">🌐</div>
+    <h2 class="title" style="font-size:clamp(24px,7vw,34px)">PLAY ONLINE</h2>
+    <p class="subtitle" id="onlineSub">Create a game and invite friends 🎳</p>
+    <input id="mpName" type="text" placeholder="Your name" maxlength="14" autocomplete="off" autocapitalize="words" spellcheck="false" />
+    <div id="onlineCreate"><button class="bigbtn" id="createBtn">➕ Create Session</button></div>
+    <div id="onlineJoin" class="hidden">
+      <div class="diffLabel" style="margin-bottom:8px;">Joining game <b id="joinCode" style="color:var(--gold)"></b></div>
+      <button class="bigbtn" id="joinBtn">✅ Join Game</button>
+    </div>
+    <div id="onlineErr" style="color:#ff9a9a;font-size:13px;margin-top:10px;min-height:16px;"></div>
+    <div style="margin-top:14px;"><button class="onlinebtn" id="onlineBack">← Back</button></div>
+  </div>
+</div>
+
+<!-- Lobby -->
+<div id="lobby" class="overlay hidden">
+  <div class="card">
+    <div class="pc-crown" style="font-size:34px;">🎳</div>
+    <h2 class="title" style="font-size:clamp(22px,6vw,30px)">GAME LOBBY</h2>
+    <p class="subtitle">Send this link to friends so they can join:</p>
+    <div class="linkRow"><input id="linkBox" readonly /><button id="copyBtn" class="onlinebtn">Copy</button></div>
+    <div class="diffLabel" style="margin-top:16px;">Players in this game</div>
+    <div class="lb" id="lobbyPlayers"></div>
+    <div id="lobbyHostMsg" class="hidden"><button class="bigbtn" id="startMpBtn" style="margin-top:8px;">▶ START GAME</button></div>
+    <div id="lobbyGuestMsg" class="subtitle hidden" style="margin-top:12px;">⏳ Waiting for the host to start…</div>
+    <div style="margin-top:14px;"><button class="onlinebtn" id="leaveBtn">← Leave</button></div>
+  </div>
+</div>
+
+<!-- Multiplayer in-game HUD -->
+<div id="mpHud" class="hidden">
+  <div class="mpStrip" id="mpBar"></div>
+  <div class="midp" style="position:absolute;left:0;right:0;top:74px;pointer-events:none;"><div class="midFrame" id="mpFrame">Frame 1/10</div><div class="midTurn" id="mpTurn"></div></div>
+</div>
+<!-- Waiting screen (another player's turn) -->
+<div id="mpWait" class="overlay hidden" style="background:rgba(5,7,12,.55);backdrop-filter:blur(2px);">
+  <div class="card" style="padding:22px;">
+    <div style="font-size:40px;">🎳</div>
+    <div id="mpWaitWho" style="font-weight:900;font-size:clamp(20px,6vw,28px);margin:8px 0;color:#9fe0ff;"></div>
+    <div class="subtitle" style="margin-bottom:6px;">Hang tight — it'll be your turn soon!</div>
+    <div class="lb" id="mpWaitBoard"></div>
   </div>
 </div>
 
@@ -418,6 +481,7 @@ function resolveBall(){
   else if(knocked>0) flash(knocked+(knocked===1?' pin':' pins'),'#fff',true);
   else flash('gutter','#9fb3cc',true);
   updateHUD();
+  if(MP.active){ mpLiveScore={id:MP.id,score:players[0].score}; renderMpBar(); }
 
   phase='wait'; camMode='pins';
   if(round<10){
@@ -435,7 +499,7 @@ function advanceTenth(P){
   else if(thrown===2){ if(b[0]===10) cont(b[1]===10,1100); else if(b[0]+b[1]===10) cont(true,1100); else setTimeout(endTurn,1100); }
   else setTimeout(endTurn,1100);
 }
-function endTurn(){ curPlayer++; if(curPlayer>=players.length){ curPlayer=0; round++; } if(round>10){ endGame(); return; } startTurn(); }
+function endTurn(){ if(MP.active){ mpEndMyFrame(); return; } curPlayer++; if(curPlayer>=players.length){ curPlayer=0; round++; } if(round>10){ endGame(); return; } startTurn(); }
 
 function configureBallFor(P){
   steerK = P.isTrevor?7.0:0;
@@ -594,7 +658,7 @@ addEventListener('contextmenu',e=>e.preventDefault());
 document.querySelectorAll('.diff').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.diff').forEach(b=>b.classList.remove('sel')); btn.classList.add('sel'); selSkill=btn.dataset.skill; }));
 $('startBtn').addEventListener('click',()=>{ sound.init(); startGame(); });
 nameInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ sound.init(); startGame(); } });
-$('againBtn').addEventListener('click',()=>{ resultScreen.classList.add('hidden'); startScreen.classList.remove('hidden'); nameInput.value=players[0]&&players[0].name!=='Player'?players[0].name:''; phase='start'; });
+$('againBtn').addEventListener('click',()=>{ if(MP.active){ leaveSession(); return; } resultScreen.classList.add('hidden'); startScreen.classList.remove('hidden'); nameInput.value=players[0]&&players[0].name!=='Player'?players[0].name:''; phase='start'; });
 
 // ============================================================
 //  Sound — synth + crowd applause
@@ -613,13 +677,107 @@ const sound=(function(){ let actx=null,muted=false;
 muteBtn.addEventListener('click',()=>{ const m=muteBtn.textContent==='🔊'; sound.mute(m); muteBtn.textContent=m?'🔇':'🔊'; });
 
 // ============================================================
+//  Online multiplayer (Firestore realtime sessions)
+// ============================================================
+const MAXP=4, CODE_AB='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function genCode(){ let s=''; for(let i=0;i<5;i++) s+=CODE_AB[(Math.random()*CODE_AB.length)|0]; return s; }
+function getPid(){ let id=null; try{ id=localStorage.getItem('tb_pid'); }catch(e){} if(!id){ id='p'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); try{ localStorage.setItem('tb_pid',id); }catch(e){} } return id; }
+const MP={ active:false, code:null, id:getPid(), unsub:null, doc:null, players:[], turnIndex:0, round:1, status:'', rolls:{}, arcades:{}, combos:{}, bowling:false };
+let pendingJoin=null, mpLiveScore=null;
+const onlinePanel=$('onlinePanel'), lobby=$('lobby'), mpHud=$('mpHud'), mpWait=$('mpWait'), mpName=$('mpName'),
+      onlineErr=$('onlineErr'), onlineSub=$('onlineSub'), linkBox=$('linkBox'), lobbyPlayers=$('lobbyPlayers'),
+      mpBar=$('mpBar'), mpFrame=$('mpFrame'), mpTurn=$('mpTurn'), mpWaitWho=$('mpWaitWho'), mpWaitBoard=$('mpWaitBoard');
+
+function sessionLink(code){ return location.origin+location.pathname+'?s='+code; }
+async function fbReady(){ try{ return (await initOnline()) && !!db; }catch(e){ return false; } }
+function cleanName(v){ return (v||'').trim().replace(/\s+/g,' ').slice(0,14)||'Player'; }
+
+function openOnline(code){
+  startScreen.classList.add('hidden'); resultScreen.classList.add('hidden'); lobby.classList.add('hidden'); onlinePanel.classList.remove('hidden');
+  mpName.value=(nameInput.value||'').trim(); onlineErr.textContent='';
+  if(code){ pendingJoin=code; $('joinCode').textContent=code; $('onlineJoin').classList.remove('hidden'); $('onlineCreate').classList.add('hidden'); onlineSub.textContent='Join your friend’s game 🎳'; }
+  else { pendingJoin=null; $('onlineJoin').classList.add('hidden'); $('onlineCreate').classList.remove('hidden'); onlineSub.textContent='Create a game and invite friends 🎳'; }
+}
+async function createSession(){ sound.init(); const nm=cleanName(mpName.value); onlineErr.textContent='Connecting…';
+  if(!(await fbReady())){ onlineErr.textContent='Could not reach the server. Check your connection.'; return; }
+  const code=genCode(); const p={id:MP.id,name:nm,isTrevor:nm.toLowerCase()==='trevor',joined:Date.now()};
+  try{ await db.collection('sessions').doc(code).set({code,host:MP.id,status:'lobby',createdAt:Date.now(),players:[p],turnIndex:0,round:1,rolls:{},arcades:{},combos:{}}); onlineErr.textContent=''; enterSession(code); }
+  catch(e){ onlineErr.textContent='Create failed: '+(e.message||e); } }
+async function joinSession(){ sound.init(); const code=pendingJoin; if(!code) return; const nm=cleanName(mpName.value); onlineErr.textContent='Joining…';
+  if(!(await fbReady())){ onlineErr.textContent='Could not reach the server.'; return; }
+  const ref=db.collection('sessions').doc(code);
+  try{ await db.runTransaction(async tx=>{ const s=await tx.get(ref); if(!s.exists) throw new Error('Game not found'); const d=s.data();
+      if(d.status!=='lobby') throw new Error('That game already started'); let pl=d.players||[];
+      if(!pl.find(x=>x.id===MP.id)){ if(pl.length>=MAXP) throw new Error('Game is full (max '+MAXP+')'); pl=pl.concat([{id:MP.id,name:nm,isTrevor:nm.toLowerCase()==='trevor',joined:Date.now()}]); tx.update(ref,{players:pl}); } });
+    onlineErr.textContent=''; enterSession(code); }
+  catch(e){ onlineErr.textContent=(e.message||'Join failed'); } }
+function enterSession(code){ MP.active=true; MP.code=code; onlinePanel.classList.add('hidden'); startScreen.classList.add('hidden');
+  try{ history.replaceState(null,'',sessionLink(code)); }catch(e){}
+  if(MP.unsub) MP.unsub();
+  MP.unsub=db.collection('sessions').doc(code).onSnapshot(s=>{ if(s.exists) applyDoc(s.data()); else { leaveSession(); } }, e=>{}); }
+function leaveSession(){ if(MP.unsub){ MP.unsub(); MP.unsub=null; } MP.active=false; MP.bowling=false;
+  [lobby,mpHud,mpWait,resultScreen,onlinePanel].forEach(el=>el.classList.add('hidden'));
+  try{ history.replaceState(null,'',location.origin+location.pathname); }catch(e){}
+  startScreen.classList.remove('hidden'); phase='start'; }
+async function mpUpdate(o){ try{ await db.collection('sessions').doc(MP.code).update(o); }catch(e){} }
+
+function mpScore(p){ return p.isTrevor ? (MP.arcades[p.id]||0) : standardScore(MP.rolls[p.id]||[]); }
+function applyDoc(d){ MP.doc=d; MP.players=d.players||[]; MP.turnIndex=d.turnIndex||0; MP.round=d.round||1; MP.status=d.status; MP.rolls=d.rolls||{}; MP.arcades=d.arcades||{}; MP.combos=d.combos||{};
+  if(d.status==='lobby') showLobby(); else if(d.status==='playing') runPlaying(); else if(d.status==='done') mpResults(); }
+
+function showLobby(){ lobby.classList.remove('hidden'); onlinePanel.classList.add('hidden'); startScreen.classList.add('hidden'); mpHud.classList.add('hidden'); mpWait.classList.add('hidden'); resultScreen.classList.add('hidden'); muteBtn.classList.remove('hidden');
+  linkBox.value=sessionLink(MP.code);
+  lobbyPlayers.innerHTML=MP.players.map((p,i)=>`<div class="lbRow${p.id===MP.id?' you':''}"><div class="lbPos">${i+1}</div><div class="lbName">${p.isTrevor?'👑 ':''}${escapeHtml(p.name)}${p.id===MP.id?' (you)':''}${p.id===MP.doc.host?' · host':''}</div></div>`).join('');
+  const isHost=MP.doc.host===MP.id; $('lobbyHostMsg').classList.toggle('hidden',!isHost); $('lobbyGuestMsg').classList.toggle('hidden',isHost);
+  $('startMpBtn').disabled=MP.players.length<2; $('startMpBtn').style.opacity=MP.players.length<2?0.5:1; }
+async function startMpGame(){ if(MP.doc.host!==MP.id||MP.players.length<2) return; await mpUpdate({status:'playing',turnIndex:0,round:1,rolls:{},arcades:{},combos:{}}); }
+
+function runPlaying(){ hud.classList.add('hidden'); lobby.classList.add('hidden'); resultScreen.classList.add('hidden'); onlinePanel.classList.add('hidden'); mpHud.classList.remove('hidden'); muteBtn.classList.remove('hidden');
+  renderMpBar(); const t=MP.players[MP.turnIndex];
+  if(t && t.id===MP.id){ mpWait.classList.add('hidden'); if(!MP.bowling){ MP.bowling=true; mpBeginMyFrame(); } }
+  else { MP.bowling=false; showMpWait(t); } }
+function renderMpBar(){ mpFrame.textContent='Frame '+Math.min(MP.round,10)+'/10'; const t=MP.players[MP.turnIndex];
+  mpTurn.textContent = t ? (t.id===MP.id?'★ Your turn!':(t.name+' is bowling…')) : '';
+  mpBar.innerHTML=MP.players.map((p,i)=>{ const sc=(mpLiveScore&&mpLiveScore.id===p.id)?mpLiveScore.score:mpScore(p);
+    return `<div class="mpChip${i===MP.turnIndex?' active':''}"><div class="n">${p.isTrevor?'👑':''}${escapeHtml(p.name)}${p.id===MP.id?'*':''}</div><div class="s">${Number(sc).toLocaleString()}</div></div>`; }).join(''); }
+function showMpWait(t){ phase='wait'; aimHint.classList.add('hidden'); mpHud.classList.add('hidden'); mpWait.classList.remove('hidden');
+  mpWaitWho.textContent = t?('🎳 '+t.name+' is bowling'):'Waiting…';
+  mpWaitBoard.innerHTML=MP.players.map((p,i)=>`<div class="lbRow${i===MP.turnIndex?' you':''}"><div class="lbPos">#${i+1}</div><div class="lbName">${p.isTrevor?'👑 ':''}${escapeHtml(p.name)}</div><div class="lbScore">${mpScore(p).toLocaleString()}</div></div>`).join(''); }
+
+function mpBeginMyFrame(){ const me=MP.players[MP.turnIndex];
+  const ep=freshPlayer(me.name,me.isTrevor,false,null); ep.rolls=(MP.rolls[MP.id]||[]).slice(); ep.arcade=MP.arcades[MP.id]||0; ep.combo=MP.combos[MP.id]||0; ep.score=mpScore(me);
+  players=[ep]; curPlayer=0; round=MP.round; mpLiveScore={id:MP.id,score:ep.score};
+  mpWait.classList.add('hidden'); banner('★ Your turn — Frame '+Math.min(MP.round,10),'#ffd24a'); startTurn(); }
+async function mpEndMyFrame(){ const me=players[0]; mpLiveScore={id:MP.id,score:me.score};
+  const isLast=MP.turnIndex===MP.players.length-1; const nT=isLast?0:MP.turnIndex+1; const nR=isLast?MP.round+1:MP.round; const done=nR>10;
+  MP.bowling=false;
+  await mpUpdate({['rolls.'+MP.id]:me.rolls,['arcades.'+MP.id]:me.arcade,['combos.'+MP.id]:me.combo, turnIndex:done?MP.turnIndex:nT, round:done?MP.round:nR, status:done?'done':'playing', lastBy:me.name}); }
+function mpResults(){ MP.bowling=false; [mpHud,mpWait,hud].forEach(el=>el.classList.add('hidden')); aimHint.classList.add('hidden');
+  const ranked=MP.players.map(p=>({p,score:mpScore(p)})).sort((a,b)=>b.score-a.score); const w=ranked[0];
+  winnerLine.textContent = w.p.id===MP.id?'🎉 You win!':'🏆 '+w.p.name+' wins!'; resultCrown.textContent='🏆';
+  vsBox.innerHTML=ranked.map((r,i)=>`<div class="vsP${i===0?' win':''}"><div class="vsTag">#${i+1}</div><div class="vsName">${r.p.isTrevor?'👑 ':''}${escapeHtml(r.p.name)}${r.p.id===MP.id?' (you)':''}</div><div class="vsScore">${r.score.toLocaleString()}</div></div>`).join('');
+  finalRank.textContent=''; bestLine.textContent='';
+  const me=MP.players.find(p=>p.id===MP.id); if(me) recordAndShow(me.name, mpScore(me), me.isTrevor);
+  resultScreen.classList.remove('hidden'); burstConfetti(0,2.4,laneCenterZ+3,180); sound.applause(1.2); }
+
+$('onlineBtn').addEventListener('click',()=>openOnline(null));
+$('onlineBack').addEventListener('click',()=>{ onlinePanel.classList.add('hidden'); startScreen.classList.remove('hidden'); });
+$('createBtn').addEventListener('click',createSession);
+$('joinBtn').addEventListener('click',joinSession);
+$('startMpBtn').addEventListener('click',startMpGame);
+$('leaveBtn').addEventListener('click',leaveSession);
+$('copyBtn').addEventListener('click',async()=>{ try{ await navigator.clipboard.writeText(linkBox.value); }catch(e){ try{ linkBox.select(); document.execCommand('copy'); }catch(x){} } $('copyBtn').textContent='Copied!'; setTimeout(()=>$('copyBtn').textContent='Copy',1500); });
+mpName.addEventListener('keydown',e=>{ if(e.key==='Enter'){ pendingJoin?joinSession():createSession(); } });
+
+// ============================================================
 //  Resize + boot
 // ============================================================
 function resize(){ const w=innerWidth,h=innerHeight; renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); }
 addEventListener('resize',resize); addEventListener('orientationchange',resize);
 
 buildAlley(); initConfetti(); initTrail(); buildBall(ballMatHuman); resetRack(); resize();
-loadingEl.classList.add('hidden'); startScreen.classList.remove('hidden');
+loadingEl.classList.add('hidden');
+{ const jc=new URLSearchParams(location.search).get('s'); if(jc) openOnline(jc.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5)); else startScreen.classList.remove('hidden'); }
 animate();
 </script>
 </body>
