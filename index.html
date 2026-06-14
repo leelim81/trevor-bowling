@@ -62,7 +62,9 @@
   .vsScore{ font-weight:900; font-size:22px; font-variant-numeric:tabular-nums; }
   .vsTag{ font-size:10px; letter-spacing:.1em; text-transform:uppercase; opacity:.6; }
   .lbTitle{ font-size:14px; font-weight:800; letter-spacing:.04em; opacity:.85; margin-top:14px; margin-bottom:-4px; }
-  .lb{ text-align:left; margin:12px auto 4px; max-width:340px; }
+  .lb{ text-align:left; margin:12px auto 4px; max-width:340px; max-height:52vh; overflow-y:auto; overflow-x:hidden; }
+  .lb::-webkit-scrollbar{ width:7px; } .lb::-webkit-scrollbar-track{ background:rgba(255,255,255,.04); border-radius:4px; }
+  .lb::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.22); border-radius:4px; } .lb::-webkit-scrollbar-thumb:hover{ background:rgba(255,255,255,.35); }
   .lbRow{ display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:12px; margin:5px 0; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); }
   .lbRow.you{ background:linear-gradient(90deg, rgba(255,210,74,.22), rgba(255,210,74,.06)); border-color:rgba(255,210,74,.5); }
   .lbPos{ width:22px; font-weight:900; opacity:.8; text-align:center; }
@@ -584,8 +586,9 @@ function getLocalRaw(){ try{ return JSON.parse(localStorage.getItem('tb_games')|
 function addLocalRaw(e){ const l=getLocalRaw(); l.push(e); const t=l.slice(-800); try{ localStorage.setItem('tb_games',JSON.stringify(t)); }catch(x){} return t; }
 function renderBoard(list, youKey, status){
   lbTitle.innerHTML='🏆 Leaderboard'+(status?' <span style="opacity:.55;font-weight:600">'+status+'</span>':'');
-  leaderboard.innerHTML=list.slice(0,8).map((row,i)=>{ const you=youKey&&row._k===youKey;
-    return `<div class="lbRow${you?' you':''}"><div class="lbPos">${i===0?'👑':'#'+(i+1)}</div><div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div><div class="lbScore">${Number(row.score).toLocaleString()}</div></div>`; }).join(''); }
+  leaderboard.innerHTML=list.slice(0,100).map((row,i)=>{ const you=youKey&&row._k===youKey;
+    return `<div class="lbRow${you?' you':''}"><div class="lbPos">${i===0?'👑':'#'+(i+1)}</div><div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div><div class="lbScore">${Number(row.score).toLocaleString()}</div></div>`; }).join('');
+  const me=leaderboard.querySelector('.you'); if(me) me.scrollIntoView({block:'nearest'}); }
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
 async function initOnline(){ if(onlineState==='ready') return true; if(onlineState==='loading'||!FIREBASE_CONFIG) return false; onlineState='loading';
   try{ const V='10.14.1'; await loadScript('https://www.gstatic.com/firebasejs/'+V+'/firebase-app-compat.js'); await loadScript('https://www.gstatic.com/firebasejs/'+V+'/firebase-firestore-compat.js');
@@ -852,7 +855,7 @@ mpName.addEventListener('keydown',e=>{ if(e.key==='Enter'){ pendingJoin?joinSess
 // ---- leaderboard viewer (from the start screen) ----
 function renderListInto(list, status){
   $('lbViewTitle').innerHTML='🏆 Top Bowlers'+(status?' <span style="opacity:.55;font-weight:600">'+status+'</span>':'');
-  $('lbList').innerHTML = list.length ? list.slice(0,12).map((row,i)=>`<div class="lbRow"><div class="lbPos">${i===0?'👑':'#'+(i+1)}</div><div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div><div class="lbScore">${Number(row.score).toLocaleString()}</div></div>`).join('') : '<div class="subtitle" style="margin:12px 0;">No scores yet — be the first! 🎳</div>';
+  $('lbList').innerHTML = list.length ? list.slice(0,100).map((row,i)=>`<div class="lbRow"><div class="lbPos">${i===0?'👑':'#'+(i+1)}</div><div class="lbName">${escapeHtml(row.name)}${row.trevor?' 👑':''}</div><div class="lbScore">${Number(row.score).toLocaleString()}</div></div>`).join('') : '<div class="subtitle" style="margin:12px 0;">No scores yet — be the first! 🎳</div>';
 }
 function viewLeaderboard(){ startScreen.classList.add('hidden'); resultScreen.classList.add('hidden'); $('lbScreen').classList.remove('hidden');
   renderListInto(aggregate(getLocalRaw()), FIREBASE_CONFIG?'· connecting…':'· this device');
