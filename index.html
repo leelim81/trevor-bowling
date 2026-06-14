@@ -638,7 +638,7 @@ function initAccidents(){
 }
 function rollAccident(P){ if(!ACCIDENTS_ON || !P) return null; const r=Math.random();
   if(P.isTrevor) return r<0.02?'sky':(r<0.04?'floor':(r<0.06?'shrink':null));   // Trevor: 2% each
-  return r<0.10?'sky':(r<0.20?'floor':(r<0.30?'shrink':null)); }                // everyone else: 10% each
+  return r<0.05?'sky':(r<0.10?'floor':(r<0.15?'shrink':null)); }                // everyone else: 5% each (halved)
 function armAccident(a){ acc=a||null; accTriggered=false; accStage=0; accT=0; }
 function triggerAccident(){ accTriggered=true; accStage=1; accT=0;
   if(acc==='sky'){ ballBody.velocity.set(rnd(-1.2,1.2),8.2,4.4); ballBody.angularVelocity.set(rnd(-6,6),rnd(-6,6),rnd(-6,6)); camMode='sky'; sound.whoosh(); flash('WHOA!','#9fe0ff',true); }
