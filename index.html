@@ -445,12 +445,16 @@ function endGame(){
 // ============================================================
 //  Leaderboard  (device-local always; worldwide when Firebase configured)
 // ============================================================
-// ▼▼▼  PASTE YOUR FIREBASE WEB CONFIG HERE to switch on the worldwide board.
-//      Leave it null and the game uses a device-local board (no fake names).
-const FIREBASE_CONFIG = null;
-/* example:
-const FIREBASE_CONFIG = { apiKey:"AIza...", authDomain:"trevor-bowling-xxxx.firebaseapp.com", projectId:"trevor-bowling-xxxx", appId:"1:000:web:abc" };
-*/
+// ▼▼▼  Firebase web config — switches on the worldwide leaderboard.
+//      (These values are public by design; security is enforced by Firestore rules.)
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDgruilh7JgQEsdZzg5eztiHrTyjxsrs6w",
+  authDomain: "trevor-bowling.firebaseapp.com",
+  projectId: "trevor-bowling",
+  storageBucket: "trevor-bowling.firebasestorage.app",
+  messagingSenderId: "945713277379",
+  appId: "1:945713277379:web:efdb703fdfa15a739db576"
+};
 const SCORES_COLLECTION='scores';
 let myCid='', db=null, onlineState='off';
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
