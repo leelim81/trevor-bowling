@@ -396,7 +396,7 @@ function placeBall(){ ballBody.velocity.setZero(); ballBody.angularVelocity.setZ
 let pins=[];
 function newPin(spec){ const mesh=makePinMesh(); mesh.position.set(spec.x,PIN_H/2,spec.z); scene.add(mesh);
   const body=new CANNON.Body({mass:0.8,material:mPin,shape:new CANNON.Box(new CANNON.Vec3(PIN_HW,PIN_H/2,PIN_HW)),position:new CANNON.Vec3(spec.x,PIN_H/2,spec.z)});
-  body.linearDamping=0.02; body.angularDamping=0.07; body.allowSleep=true; body.sleepSpeedLimit=0.12; body.sleepTimeLimit=0.4; world.addBody(body);
+  body.linearDamping=0.02; body.angularDamping=0.07; body.allowSleep=true; body.sleepSpeedLimit=0.12; body.sleepTimeLimit=0.4; body.collisionFilterGroup=2; world.addBody(body);
   return {x:spec.x,z:spec.z,down:false,mesh,body}; }
 function removePinObjects(p){ if(p.mesh){ scene.remove(p.mesh); p.mesh=null; } if(p.body){ world.removeBody(p.body); p.body=null; } }
 function resetRack(){ for(const p of pins) removePinObjects(p); setFrame(round); pins=rackForFrame(round).map(newPin); }
@@ -637,19 +637,22 @@ function initAccidents(){
   crackMesh=new THREE.Mesh(new THREE.ShapeGeometry(shp), new THREE.MeshBasicMaterial({color:0x04050a})); crackMesh.rotation.x=-Math.PI/2; crackMesh.position.y=0.02; crackMesh.visible=false; scene.add(crackMesh);
 }
 function rollAccident(P){ if(!ACCIDENTS_ON || !P) return null; const r=Math.random();
-  if(P.isTrevor) return r<0.02?'sky':(r<0.04?'floor':null);   // Trevor: 2% each (sky / floor)
-  return r<0.10?'sky':(r<0.20?'floor':null); }                // everyone else: 10% each
+  if(P.isTrevor) return r<0.02?'sky':(r<0.04?'floor':(r<0.06?'shrink':null));   // Trevor: 2% each
+  return r<0.10?'sky':(r<0.20?'floor':(r<0.30?'shrink':null)); }                // everyone else: 10% each
 function armAccident(a){ acc=a||null; accTriggered=false; accStage=0; accT=0; }
 function triggerAccident(){ accTriggered=true; accStage=1; accT=0;
   if(acc==='sky'){ ballBody.velocity.set(rnd(-1.2,1.2),8.2,4.4); ballBody.angularVelocity.set(rnd(-6,6),rnd(-6,6),rnd(-6,6)); camMode='sky'; sound.whoosh(); flash('WHOA!','#9fe0ff',true); }
-  else { const bp=ballBody.position; crackMesh.position.set(bp.x,0.02,bp.z); crackMesh.scale.set(0.01,0.01,0.01); crackMesh.visible=true; ballBody.collisionResponse=false; ballBody.velocity.set(ballBody.velocity.x*0.2,-2.6,ballBody.velocity.z*0.15); ballBody.angularVelocity.set(rnd(-4,4),rnd(-4,4),rnd(-4,4)); camMode='floor'; sound.quake(); shake=0.28; flash('SINKHOLE!','#c9a06a',true); }
+  else if(acc==='floor'){ const bp=ballBody.position; crackMesh.position.set(bp.x,0.02,bp.z); crackMesh.scale.set(0.01,0.01,0.01); crackMesh.visible=true; ballBody.collisionResponse=false; ballBody.velocity.set(ballBody.velocity.x*0.2,-2.6,ballBody.velocity.z*0.15); ballBody.angularVelocity.set(rnd(-4,4),rnd(-4,4),rnd(-4,4)); camMode='floor'; sound.quake(); shake=0.28; flash('SINKHOLE!','#c9a06a',true); }
+  else if(acc==='shrink'){ ballBody.collisionFilterMask=~2; camMode='roll'; sound.shrink(); flash('SHRINKING!','#9fe0ff',true); }   // ignore pins (group 2): rolls through, can't topple
 }
 function updateAccident(dt){ accT+=dt;
   if(acc==='floor' && crackMesh.visible){ const s=Math.min(1,accT*4); crackMesh.scale.set(s,s,s); }
+  if(acc==='shrink'){ const sc=clamp(0.1+0.9*((ballBody.position.z-HEAD_Z)/6),0.1,1); ballMesh.scale.setScalar(sc); }
   if(accStage===1){
     if(acc==='sky'){ if((ballBody.position.z>START_Z-0.5 && ballBody.position.y<2.4) || accT>2.4){ accStage=2; accT=0; ballBody.velocity.setZero(); showCrack(); sound.glass(); shake=0.7; } }
-    else { if(ballBody.position.y<-2 || accT>1.7){ accStage=2; accT=0; } }
-  } else if(accStage===2){ if(accT > (acc==='sky'?0.9:0.5)) finishAccident(); }
+    else if(acc==='floor'){ if(ballBody.position.y<-2 || accT>1.7){ accStage=2; accT=0; } }
+    else if(acc==='shrink'){ if(ballBody.position.z<=HEAD_Z+0.15 || accT>3){ accStage=2; accT=0; const sp=Math.max(2,Math.abs(ballBody.velocity.z)); ballBody.velocity.set(ballBody.velocity.x*0.2,1.2,sp*0.45+0.8); ballBody.angularVelocity.set(rnd(-8,8),rnd(-8,8),rnd(-8,8)); sound.boink(); flash('TOO TINY! 0','#ff8a8a',true); } }
+  } else if(accStage===2){ if(accT > (acc==='floor'?0.5:0.9)) finishAccident(); }
 }
 function showCrack(){ const o=$('crackOverlay'); o.innerHTML=crackSVG(); o.classList.add('show'); clearTimeout(showCrack._t); showCrack._t=setTimeout(()=>o.classList.remove('show'),1500); }
 function crackSVG(){ const X=50,Y=44,parts=[],n=15;
@@ -658,7 +661,7 @@ function crackSVG(){ const X=50,Y=44,parts=[],n=15;
   for(const rr of [9,19,31]){ let d=''; for(let i=0;i<=12;i++){ const a=i/12*6.283, r=rr+(Math.random()-0.5)*5, x=X+Math.cos(a)*r, y=Y+Math.sin(a)*r; d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' '; } parts.push('<path d="'+d+'"/>'); }
   return '<svg viewBox="0 0 100 100" preserveAspectRatio="none"><g fill="none" stroke="rgba(255,255,255,.85)" stroke-width="0.5">'+parts.join('')+'</g><circle cx="'+X+'" cy="'+Y+'" r="2" fill="#fff"/></svg>';
 }
-function finishAccident(){ ballBody.collisionResponse=true; crackMesh.visible=false; acc=null; accStage=0; accTriggered=false;
+function finishAccident(){ ballBody.collisionResponse=true; ballBody.collisionFilterMask=-1; ballMesh.scale.setScalar(1); crackMesh.visible=false; acc=null; accStage=0; accTriggered=false;
   if(MP.active && MP.spectating){ phase='wait'; camMode='pins'; return; }   // spectator: visual only
   accidentResolve(players[curPlayer]); }
 function accidentResolve(P){
@@ -738,6 +741,8 @@ const sound=(function(){ let actx=null,muted=false;
     whoosh(){ init(); sweep(220,1100,0.75,0.16,'sine'); noise(0.5,0.06); },
     glass(){ init(); noise(0.28,0.42); [3200,4700,2400,5600,3900].forEach((f,i)=>setTimeout(()=>tone(f,0.13,'triangle',0.13),i*45)); },
     quake(){ init(); noise(0.7,0.32); sweep(120,38,0.6,0.4,'sine'); },
+    shrink(){ init(); sweep(800,150,0.75,0.11,'sine'); },
+    boink(){ init(); tone(300,0.14,'sine',0.13); },
     strike(){ init(); [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,0.18,'triangle',0.16),i*70)); noise(0.22,0.3); }, applause };
 })();
 muteBtn.addEventListener('click',()=>{ const m=muteBtn.textContent==='🔊'; sound.mute(m); muteBtn.textContent=m?'🔇':'🔊'; });
