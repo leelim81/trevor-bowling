@@ -681,6 +681,8 @@ function accidentResolve(P){
 // ============================================================
 const MBOX_HALF=0.135, TNT_BLAST=0.81 /* = 3 ball diameters */;
 const MBOX_EFFECTS=['sky','floor','shrink','mega','tnt','missiles','dance'];
+const MBOX_WEIGHTS={ sky:12, floor:12, shrink:12, mega:12, tnt:12, missiles:12, dance:28 };  // % chance per effect when the box is hit (sum = 100)
+function rollMboxEffect(){ let r=Math.random()*100; for(const e of MBOX_EFFECTS){ r-=(MBOX_WEIGHTS[e]||0); if(r<0) return e; } return MBOX_EFFECTS[MBOX_EFFECTS.length-1]; }
 let mboxMesh=null, mboxActive=false, mboxHit=false, mboxX=0, mboxZ=-6, mboxEffect=null, mboxSpin=0;
 let fx=null, fxT=0, fxPerfect=false, bombs=[], missiles=[], dancer=null, faceTex=null, curBallMat=null;
 
@@ -705,7 +707,7 @@ function spawnMysteryBox(sync){ // {x,z,eff} forces · true=force random · null
   let pos=null, eff=null;
   if(sync && typeof sync==='object'){ pos={x:sync.x,z:sync.z}; eff=sync.eff; }
   else if(sync===null) return null;
-  else if(sync===true || Math.random()<0.20){ pos={x:rnd(-laneHalfW*0.6,laneHalfW*0.6),z:rnd(HEAD_Z+3.5,-3.5)}; eff=MBOX_EFFECTS[(Math.random()*MBOX_EFFECTS.length)|0]; }
+  else if(sync===true || Math.random()<0.20){ pos={x:rnd(-laneHalfW*0.6,laneHalfW*0.6),z:rnd(HEAD_Z+3.5,-3.5)}; eff=rollMboxEffect(); }
   if(!pos) return null;
   mboxX=pos.x; mboxZ=pos.z; mboxEffect=eff; mboxActive=true; mboxSpin=0;
   mboxMesh.position.set(mboxX,0.22,mboxZ); mboxMesh.rotation.set(0,0,0); mboxMesh.visible=true;
