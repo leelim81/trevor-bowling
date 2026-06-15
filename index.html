@@ -563,7 +563,7 @@ function endGame(){
 }
 
 // ============================================================
-//  Leaderboard (cumulative, case-insensitive; local + Firebase)
+//  Leaderboard (best score per player, case-insensitive; local + Firebase)
 // ============================================================
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDgruilh7JgQEsdZzg5eztiHrTyjxsrs6w",
@@ -580,7 +580,7 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<'
 function aggregate(raw){ const map=new Map();
   for(const e of raw){ if((e.ts||0) < SEASON_START) continue; const key=String(e.name||'').trim().toLowerCase(); if(!key) continue; let g=map.get(key);
     if(!g){ g={_k:key,name:e.name,score:0,trevor:false,ts:-1}; map.set(key,g); }
-    g.score+=Number(e.score)||0; if(e.trevor) g.trevor=true; if((e.ts||0)>=g.ts){ g.ts=e.ts||0; g.name=e.name; } }
+    g.score=Math.max(g.score, Number(e.score)||0); if(e.trevor) g.trevor=true; if((e.ts||0)>=g.ts){ g.ts=e.ts||0; g.name=e.name; } }
   return [...map.values()].sort((a,b)=>b.score-a.score); }
 function getLocalRaw(){ try{ return JSON.parse(localStorage.getItem('tb_games')||'[]'); }catch(e){ return []; } }
 function addLocalRaw(e){ const l=getLocalRaw(); l.push(e); const t=l.slice(-800); try{ localStorage.setItem('tb_games',JSON.stringify(t)); }catch(x){} return t; }
