@@ -181,6 +181,7 @@
     <div class="lb" id="lobbyPlayers"></div>
     <div id="lobbyHostMsg" class="hidden"><button class="bigbtn" id="startMpBtn" style="margin-top:8px;">▶ START GAME</button></div>
     <div id="lobbyGuestMsg" class="subtitle hidden" style="margin-top:12px;">⏳ Waiting for the host to start…</div>
+    <div id="lobbyErr" class="subtitle" style="margin-top:10px;color:#ff8a8a;min-height:1.2em;"></div>
     <div style="margin-top:14px;"><button class="onlinebtn" id="leaveBtn">← Leave</button></div>
   </div>
 </div>
@@ -788,7 +789,7 @@ async function joinSession(){ sound.init(); const code=pendingJoin; if(!code) re
 function enterSession(code){ MP.active=true; MP.code=code; onlinePanel.classList.add('hidden'); startScreen.classList.add('hidden');
   try{ history.replaceState(null,'',sessionLink(code)); }catch(e){}
   if(MP.unsub) MP.unsub();
-  MP.unsub=db.collection('sessions').doc(code).onSnapshot(s=>{ if(s.exists) applyDoc(s.data()); else { leaveSession(); } }, e=>{}); }
+  MP.unsub=db.collection('sessions').doc(code).onSnapshot(s=>{ if(s.exists) applyDoc(s.data()); else { leaveSession(); } }, e=>{ const el=$('lobbyErr'); if(el) el.textContent='Connection problem: '+(e&&(e.code||e.message)||e); }); }
 function leaveSession(){ if(MP.unsub){ MP.unsub(); MP.unsub=null; } MP.active=false; MP.bowling=false;
   [lobby,mpHud,mpWait,resultScreen,onlinePanel].forEach(el=>el.classList.add('hidden'));
   try{ history.replaceState(null,'',location.origin+location.pathname); }catch(e){}
@@ -802,9 +803,15 @@ function applyDoc(d){ MP.doc=d; MP.players=d.players||[]; MP.turnIndex=d.turnInd
 function showLobby(){ lobby.classList.remove('hidden'); onlinePanel.classList.add('hidden'); startScreen.classList.add('hidden'); mpHud.classList.add('hidden'); mpWait.classList.add('hidden'); resultScreen.classList.add('hidden'); muteBtn.classList.remove('hidden');
   linkBox.value=sessionLink(MP.code);
   lobbyPlayers.innerHTML=MP.players.map((p,i)=>`<div class="lbRow${p.id===MP.id?' you':''}"><div class="lbPos">${i+1}</div><div class="lbName">${p.isTrevor?'👑 ':''}${escapeHtml(p.name)}${p.id===MP.id?' (you)':''}${p.id===MP.doc.host?' · host':''}</div></div>`).join('');
-  const isHost=MP.doc.host===MP.id; $('lobbyHostMsg').classList.toggle('hidden',!isHost); $('lobbyGuestMsg').classList.toggle('hidden',isHost);
-  $('startMpBtn').disabled=MP.players.length<2; $('startMpBtn').style.opacity=MP.players.length<2?0.5:1; }
-async function startMpGame(){ if(MP.doc.host!==MP.id||MP.players.length<2) return; await mpUpdate({status:'playing',turnIndex:0,round:1,rolls:{},arcades:{},combos:{}}); }
+  const isHost=effectiveHost()===MP.id; $('lobbyHostMsg').classList.toggle('hidden',!isHost); $('lobbyGuestMsg').classList.toggle('hidden',isHost);
+  $('startMpBtn').disabled=MP.players.length<2; $('startMpBtn').style.opacity=MP.players.length<2?0.5:1; if(MP.status==='lobby') $('lobbyErr').textContent=''; }
+function effectiveHost(){ const present=MP.players.some(p=>p.id===MP.doc.host); return present?MP.doc.host:(MP.players[0]&&MP.players[0].id); }
+async function startMpGame(){
+  if(effectiveHost()!==MP.id){ $('lobbyErr').textContent='Only the host can start the game.'; return; }
+  if(MP.players.length<2){ $('lobbyErr').textContent='Need at least 2 players to start.'; return; }
+  const btn=$('startMpBtn'), old=btn.textContent; btn.disabled=true; btn.textContent='Starting…'; $('lobbyErr').textContent='';
+  try{ await db.collection('sessions').doc(MP.code).update({status:'playing',turnIndex:0,round:1,rolls:{},arcades:{},combos:{}}); }
+  catch(e){ $('lobbyErr').textContent='Couldn’t start: '+(e&&(e.code||e.message)||e)+' — tap to try again.'; btn.disabled=false; btn.textContent=old; } }
 
 function runPlaying(){ hud.classList.add('hidden'); lobby.classList.add('hidden'); resultScreen.classList.add('hidden'); onlinePanel.classList.add('hidden'); mpWait.classList.add('hidden'); mpHud.classList.remove('hidden'); muteBtn.classList.remove('hidden');
   renderMpBar(); const t=MP.players[MP.turnIndex];
