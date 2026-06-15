@@ -444,13 +444,12 @@ let shake=0;
 //  Throwing
 // ============================================================
 let steerK=0;
-function launch(aimX, power, forcedAcc){
+function launch(aimX, power){
   pinsDownStartOfBall=downCount();
   const speed=lerp(8.5,15.0,power);
   ballBody.wakeUp(); ballBody.velocity.set(aimX*3.2,0,-speed);
   ballBody.angularVelocity.set(-speed/ballRadius*0.4, (steerK>1?0:aimX*1.5), 0);
   rollT=0; camMode='roll'; phase='rolling';
-  armAccident(forcedAcc!==undefined ? forcedAcc : rollAccident(players[curPlayer]));
   if(MP.active && !mpReplaying) mpWriteLive(aimX,power);
   aimHint.classList.add('hidden'); powerWrap.classList.remove('show'); drag=null; sound.roll();
 }
@@ -475,9 +474,10 @@ function standardScore(r){ let s=0,i=0; for(let f=0;f<10;f++){ if(r[i]===undefin
 function scoreOf(P){ return P.rolls.reduce((a,b)=>a+(b||0),0); }   // total pins knocked (cumulative)
 
 function resolveBall(){
-  updateDownFlags();
+  updateDownFlags(); clearBox();
   const P=players[curPlayer];
-  const startDown=pinsDownStartOfBall, down=downCount(), knocked=down-startDown, rackSize=pins.length;
+  const rackSize=pins.length, startDown=pinsDownStartOfBall, down=fxPerfect?rackSize:downCount(), knocked=down-startDown;
+  fxPerfect=false;
   P.rolls.push(knocked);
   const freshRack=(startDown===0), cleared=(down===rackSize), isStrike=freshRack&&cleared, isSpare=!isStrike&&cleared;
   P.score=scoreOf(P);
@@ -494,7 +494,7 @@ function resolveBall(){
   else if(ballNum===1) setTimeout(()=>{ removeDeadwood(); ballNum=2; placeBall(); resumeTurn(P); },1000);
   else setTimeout(endTurn,1000);
 }
-function resumeTurn(P){ updateHUD(); if(P.isCPU){ phase='cpuwait'; camMode='aim'; setTimeout(cpuThrow,750); } else { camMode='aim'; phase='aim'; showAim(); } }
+function resumeTurn(P){ clearEffects(); spawnMysteryBox(); updateHUD(); if(P.isCPU){ phase='cpuwait'; camMode='aim'; setTimeout(cpuThrow,750); } else { camMode='aim'; phase='aim'; showAim(); } }
 function advanceTenth(P){
   const b=P.rolls.slice(P.tenthStart), thrown=b.length;
   const cont=(reset,delay)=>setTimeout(()=>{ if(reset){ resetRack(); pinsDownStartOfBall=0; } else { removeDeadwood(); pinsDownStartOfBall=downCount(); }
@@ -506,16 +506,15 @@ function advanceTenth(P){
 function endTurn(){ if(MP.active){ mpEndMyFrame(); return; } curPlayer++; if(curPlayer>=players.length){ curPlayer=0; round++; } if(round>10){ endGame(); return; } startTurn(); }
 
 function configureBallFor(P){
-  steerK = 0;
-  bigBall = (P.isTrevor && Math.random()<0.10);      // 10%: Trevor's gutter-proof MEGA ball (3x size)
-  ballRadius = bigBall ? 0.405 : 0.135;
-  buildBall(P.isTrevor?ballMatTrevor:(P.isCPU?ballMatCPU:ballMatHuman));
-  if(bigBall) banner('🔮 MEGA BALL — too big for gutters!','#ffd24a');
+  steerK = 0; bigBall = false; ballRadius = 0.135;     // mega is now a mystery-box effect
+  curBallMat = P.isTrevor?ballMatTrevor:(P.isCPU?ballMatCPU:ballMatHuman);
+  buildBall(curBallMat);
 }
 function startTurn(){
   const P=players[curPlayer];
   ballNum=1; if(round===10) P.tenthStart=P.rolls.length;
   configureBallFor(P); resetRack(); placeBall(); pinsDownStartOfBall=0;
+  clearEffects(); spawnMysteryBox();
   updateHUD();
   banner((P.isCPU?'🤖 ':'')+P.name+(P.isCPU?' is up':"’s turn"), P.isCPU?'#9fe0ff':'#ffd24a');
   if(P.isCPU){ phase='cpuwait'; camMode='aim'; setTimeout(cpuThrow,1100); }
@@ -676,12 +675,143 @@ function accidentResolve(P){
 }
 
 // ============================================================
+//  Mystery Box — gold-trimmed white "?" box, 20% per throw, random lane spot.
+//  Hit it → ONE random effect (equal odds):
+//  sky / floor / shrink (0 pts) · mega ball · TNT · missiles (perfect) · chicken dance
+// ============================================================
+const MBOX_HALF=0.135, TNT_BLAST=0.81 /* = 3 ball diameters */;
+const MBOX_EFFECTS=['sky','floor','shrink','mega','tnt','missiles','dance'];
+let mboxMesh=null, mboxActive=false, mboxHit=false, mboxX=0, mboxZ=-6, mboxEffect=null, mboxSpin=0;
+let fx=null, fxT=0, fxPerfect=false, bombs=[], missiles=[], dancer=null, faceTex=null, curBallMat=null;
+
+function makeQTexture(){ const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,128,128);
+  g.strokeStyle='#ffcf3a'; g.lineWidth=14; g.strokeRect(7,7,114,114);
+  g.fillStyle='#f5a623'; g.font='900 96px Arial,sans-serif'; g.textAlign='center'; g.textBaseline='middle'; g.fillText('?',64,72);
+  return new THREE.CanvasTexture(c); }
+function initMysteryBox(){ const tex=makeQTexture();
+  const mat=new THREE.MeshStandardMaterial({map:tex,color:0xffffff,roughness:0.35,metalness:0.15,emissive:0x3a2c00,emissiveIntensity:0.4});
+  mboxMesh=new THREE.Mesh(new THREE.BoxGeometry(MBOX_HALF*2,MBOX_HALF*2,MBOX_HALF*2),mat);
+  mboxMesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mboxMesh.geometry),new THREE.LineBasicMaterial({color:0xffcf3a})));
+  mboxMesh.castShadow=true; mboxMesh.visible=false; scene.add(mboxMesh); }
+function clearBox(){ mboxActive=false; mboxHit=false; mboxEffect=null; if(mboxMesh) mboxMesh.visible=false; }
+function clearEffects(){ fx=null; fxT=0; fxPerfect=false;
+  for(const b of bombs) if(b.grp) scene.remove(b.grp); bombs=[];
+  for(const m of missiles) if(m.grp) scene.remove(m.grp); missiles=[];
+  if(dancer){ scene.remove(dancer.grp); dancer=null; }
+  acc=null; accTriggered=false; accStage=0; }
+function spawnMysteryBox(sync){ // {x,z,eff} forces · true=force random · null=none · undefined=20% roll
+  clearBox();
+  let pos=null, eff=null;
+  if(sync && typeof sync==='object'){ pos={x:sync.x,z:sync.z}; eff=sync.eff; }
+  else if(sync===null) return null;
+  else if(sync===true || Math.random()<0.20){ pos={x:rnd(-laneHalfW*0.6,laneHalfW*0.6),z:rnd(HEAD_Z+3.5,-3.5)}; eff=MBOX_EFFECTS[(Math.random()*MBOX_EFFECTS.length)|0]; }
+  if(!pos) return null;
+  mboxX=pos.x; mboxZ=pos.z; mboxEffect=eff; mboxActive=true; mboxSpin=0;
+  mboxMesh.position.set(mboxX,0.22,mboxZ); mboxMesh.rotation.set(0,0,0); mboxMesh.visible=true;
+  return {x:mboxX,z:mboxZ,eff:mboxEffect}; }
+function updateMysteryBox(dt){ if(!mboxMesh||!mboxMesh.visible) return; mboxSpin+=dt;
+  mboxMesh.rotation.y=mboxSpin*2.0; mboxMesh.rotation.x=Math.sin(mboxSpin*1.3)*0.35; mboxMesh.position.y=0.24+Math.sin(mboxSpin*3.2)*0.06; }
+function hitMysteryBox(){ mboxActive=false; mboxHit=true; mboxMesh.visible=false; shake=Math.max(shake,0.2);
+  burstConfetti(mboxX,0.5,mboxZ,50); flash('✦ MYSTERY! ✦','#ffd24a',true); sound.boink();
+  const e=mboxEffect;
+  if(e==='sky'||e==='floor'||e==='shrink'){ acc=e; triggerAccident(); }
+  else if(e==='mega') startMega();
+  else if(e==='tnt') startTnt();
+  else if(e==='missiles') startMissiles();
+  else if(e==='dance') startDance(); }
+
+// ---- mega: enlarge the rolling ball to 3x, in place ----
+function startMega(){ const px=ballBody.position.x, pz=ballBody.position.z, vx=ballBody.velocity.x, vz=ballBody.velocity.z;
+  ballRadius=0.405; buildBall(curBallMat||ballMatHuman); bigBall=true;
+  ballBody.position.set(px,0.405,pz); ballBody.velocity.set(vx*0.5,0,Math.min(vz,-7)); ballBody.angularVelocity.set(-18,0,0);
+  banner('🔮 MEGA BALL!','#ffd24a'); sound.whoosh(); }
+
+// ---- TNT: bombs along the remaining roll path, ~1s fuse, blast = 3 balls ----
+function startTnt(){ fx='tnt'; fxT=0; bombs=[]; banner('🧨 TNT!!!','#ff5a3c'); sound.quake();
+  const x0=ballBody.position.x, z0=ballBody.position.z, z1=pinsBackZ-0.1, n=6;
+  for(let i=0;i<n;i++){ const k=(i+1)/(n+1), bz=lerp(z0,z1,k), bx=clamp(x0+rnd(-0.3,0.3),-laneHalfW,laneHalfW);
+    bombs.push(makeBomb(bx,bz, 0.7+k*0.5)); } }
+function makeBomb(x,z,fuse){ const grp=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.055,0.2,14),new THREE.MeshStandardMaterial({color:0xc01818,roughness:0.55})); body.position.y=0.1; body.castShadow=true; grp.add(body);
+  const band=new THREE.Mesh(new THREE.CylinderGeometry(0.057,0.057,0.045,14),new THREE.MeshStandardMaterial({color:0x111111})); band.position.y=0.1; grp.add(band);
+  const spark=new THREE.Mesh(new THREE.SphereGeometry(0.03,8,8),new THREE.MeshBasicMaterial({color:0xffe08a})); spark.position.y=0.22; grp.add(spark);
+  grp.position.set(x,0,z); scene.add(grp);
+  return {grp,spark,x,z,t:0,fuse,exploded:false}; }
+function explodeAt(x,z,blastR){ shake=Math.max(shake,0.55); sound.crash(); burstConfetti(x,0.7,z,70);
+  for(const p of pins){ if(p.down||!p.body) continue; const dx=p.body.position.x-x, dz=p.body.position.z-z, d2=dx*dx+dz*dz;
+    if(d2<blastR*blastR){ const d=Math.sqrt(d2)||0.01; p.body.wakeUp(); p.body.velocity.set(dx/d*8,5.5,dz/d*8-1.5); p.body.angularVelocity.set(rnd(-16,16),rnd(-16,16),rnd(-16,16)); } } }
+
+// ---- missiles: rain from the sky onto the pins → perfect score ----
+function startMissiles(){ fx='missiles'; fxT=0; missiles=[]; fxPerfect=true; banner('🚀 AIR-STRIKE!','#ff5a3c');
+  ballBody.velocity.set(0,0,0); ballBody.angularVelocity.set(0,0,0); camMode='pins'; sound.whoosh();
+  const tg=pins.filter(p=>!p.down&&p.body), N=Math.max(16,tg.length*2);
+  for(let i=0;i<N;i++){ const t=tg.length?tg[i%tg.length].body.position:{x:rnd(-laneHalfW,laneHalfW),z:pinsBackZ+rnd(-0.4,0.4)};
+    missiles.push(makeMissile(t.x+rnd(-0.18,0.18), t.z+rnd(-0.25,0.25), 0.05+i*0.05)); } }
+function makeMissile(tx,tz,delay){ const grp=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.24,10),new THREE.MeshStandardMaterial({color:0xe8e8ee,metalness:0.5,roughness:0.35}));
+  const nose=new THREE.Mesh(new THREE.ConeGeometry(0.04,0.1,10),new THREE.MeshStandardMaterial({color:0xff3a2a})); nose.position.y=-0.17;
+  const tail=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.1,10),new THREE.MeshStandardMaterial({color:0xff9a3a})); tail.position.y=0.16;
+  grp.add(body); grp.add(nose); grp.add(tail); grp.position.set(tx,7,tz); grp.visible=false; scene.add(grp);
+  return {grp,tx,tz,delay,t:0,exploded:false}; }
+
+// ---- chicken dance: a tiny person with your face flapping for 5s ----
+function makeFaceTexture(){ const c=document.createElement('canvas'); c.width=c.height=256; const g=c.getContext('2d');
+  g.fillStyle='#ffd9a8'; g.beginPath(); g.arc(128,134,104,0,7); g.fill();
+  g.fillStyle='#5a3b22'; g.beginPath(); g.ellipse(128,54,110,48,0,0,7); g.fill();
+  g.fillStyle='#fff'; g.beginPath(); g.arc(92,122,20,0,7); g.arc(164,122,20,0,7); g.fill();
+  g.fillStyle='#222'; g.beginPath(); g.arc(95,124,9,0,7); g.arc(167,124,9,0,7); g.fill();
+  g.fillStyle='#e88'; g.beginPath(); g.arc(70,152,15,0,7); g.arc(186,152,15,0,7); g.fill();
+  g.strokeStyle='#b5462e'; g.lineWidth=11; g.lineCap='round'; g.beginPath(); g.arc(128,168,42,0.12*Math.PI,0.88*Math.PI); g.stroke();
+  const t=new THREE.CanvasTexture(c);
+  const img=new Image(); img.onload=()=>{ const cc=document.createElement('canvas'); cc.width=cc.height=256; const gg=cc.getContext('2d');
+    const s=Math.max(256/img.width,256/img.height), w=img.width*s, h=img.height*s; gg.drawImage(img,(256-w)/2,(256-h)/2,w,h); t.image=cc; t.needsUpdate=true; };
+  img.src='face.png?v=1'; return t; }
+function makeDancer(){ const grp=new THREE.Group();
+  const shirt=new THREE.MeshStandardMaterial({color:0xff5aa5,roughness:0.6}), pants=new THREE.MeshStandardMaterial({color:0x2b6cff,roughness:0.6});
+  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.2,0.5,12),shirt); torso.position.y=0.75; grp.add(torso);
+  const headMat=new THREE.MeshBasicMaterial({map:faceTex,transparent:true,side:THREE.DoubleSide});
+  const head=new THREE.Mesh(new THREE.PlaneGeometry(0.52,0.52), headMat); head.position.y=1.2; grp.add(head);
+  const armL=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.09,0.09),shirt); armL.geometry.translate(-0.17,0,0); armL.position.set(-0.16,0.95,0);
+  const armR=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.09,0.09),shirt); armR.geometry.translate(0.17,0,0); armR.position.set(0.16,0.95,0);
+  grp.add(armL); grp.add(armR);
+  const legL=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.4,0.1),pants); legL.geometry.translate(0,-0.2,0); legL.position.set(-0.09,0.5,0);
+  const legR=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.4,0.1),pants); legR.geometry.translate(0,-0.2,0); legR.position.set(0.09,0.5,0);
+  grp.add(legL); grp.add(legR);
+  grp.position.set(0,0,HEAD_Z+3.0); grp.scale.setScalar(1.3); scene.add(grp);
+  return {grp,head,armL,armR,legL,legR,t:0}; }
+function startDance(){ if(dancer) scene.remove(dancer.grp); dancer=makeDancer(); camMode='pins'; banner('🐔 CHICKEN DANCE!','#ffd24a'); sound.dance();
+  burstConfetti(dancer.grp.position.x,1.7,dancer.grp.position.z,90); }
+function updateDancer(dt){ if(!dancer) return; dancer.t+=dt; const t=dancer.t;
+  if(t>5){ scene.remove(dancer.grp); dancer=null; return; }
+  const beat=t*6.2, flap=Math.sin(beat)*1.15;
+  dancer.armL.rotation.z=-0.2+flap; dancer.armR.rotation.z=0.2-flap;
+  dancer.grp.position.y=Math.abs(Math.sin(beat*0.5))*0.13;
+  dancer.grp.rotation.y=Math.sin(t*2.6)*0.55;
+  dancer.head.rotation.z=Math.sin(beat)*0.28;
+  dancer.legL.rotation.x=Math.sin(beat)*0.6; dancer.legR.rotation.x=-Math.sin(beat)*0.6; }
+
+// ---- blocking-effect updater (TNT / missiles) ----
+function fxResolveOrSettle(){ if(MP.active && MP.spectating){ phase='wait'; camMode='pins'; clearEffects(); clearBox(); return; } resolveBall(); }
+function fxUpdate(dt){ fxT+=dt;
+  if(fx==='tnt'){ let live=0;
+    for(const b of bombs){ if(b.exploded) continue; b.t+=dt; b.spark.visible=(Math.floor(b.t*12)%2===0); b.spark.scale.setScalar(1+Math.sin(b.t*22)*0.4);
+      if(b.t>=b.fuse){ b.exploded=true; scene.remove(b.grp); explodeAt(b.x,b.z,TNT_BLAST); } else live++; }
+    if((live===0 && (bodiesRested()||fxT>2.2)) || fxT>5.5){ fx=null; fxResolveOrSettle(); } }
+  else if(fx==='missiles'){ let live=0;
+    for(const m of missiles){ if(m.exploded) continue; live++; m.t+=dt; if(m.t<m.delay) continue; m.grp.visible=true; m.grp.position.y-=dt*18; m.grp.rotation.y+=dt*9;
+      if(m.grp.position.y<=0.25){ m.exploded=true; scene.remove(m.grp); explodeAt(m.tx,m.tz,0.5); } }
+    if(live===0){ for(const p of pins){ if(p.down||!p.body) continue; p.body.wakeUp(); p.body.velocity.set(rnd(-3,3),5,-4); p.body.angularVelocity.set(rnd(-12,12),rnd(-12,12),rnd(-12,12)); }
+      fx='done'; setTimeout(fxResolveOrSettle,500); } } }
+
+// ============================================================
 //  Main loop
 // ============================================================
 function tick(dt){
   if(phase==='rolling'){
     rollT+=dt; spawnTrail();
     if(steerK>1){ const tx=0.02; ballBody.velocity.x+=(tx-ballBody.position.x)*steerK*dt; }
+    if(mboxActive && !mboxHit){ const dx=ballBody.position.x-mboxX, dz=ballBody.position.z-mboxZ, rr=ballRadius+MBOX_HALF+0.07; if(dx*dx+dz*dz<rr*rr) hitMysteryBox(); }
     if(bigBall && !accTriggered){
       if(ballBody.position.x>laneHalfW){ ballBody.position.x=laneHalfW; if(ballBody.velocity.x>0) ballBody.velocity.x=0; }
       else if(ballBody.position.x<-laneHalfW){ ballBody.position.x=-laneHalfW; if(ballBody.velocity.x<0) ballBody.velocity.x=0; }
@@ -689,8 +819,8 @@ function tick(dt){
       const bx=ballBody.position.x, bz=ballBody.position.z, rr=(ballRadius+0.13)*(ballRadius+0.13);   // crush pins in its path
       for(const p of pins){ if(p.down||!p.body) continue; const dx=p.body.position.x-bx, dz=p.body.position.z-bz; if(dx*dx+dz*dz<rr){ p.body.wakeUp(); p.body.velocity.set(dx*8,3,(ballBody.velocity.z*0.3)-2); p.body.angularVelocity.set(rnd(-10,10),rnd(-10,10),rnd(-10,10)); } }
     }
-    if(acc && !accTriggered && ballBody.position.z < HEAD_Z+6) triggerAccident();
     if(accTriggered){ updateAccident(dt); }
+    else if(fx){ fxUpdate(dt); }
     else if(MP.active && MP.spectating){ if(rollT>0.7 && (bodiesRested()||ballBody.position.z<pinsBackZ-0.5)){ settleT+=dt; if(settleT>0.3){ settleT=0; phase='wait'; camMode='pins'; } } else settleT=0; if(rollT>4.5){ phase='wait'; camMode='pins'; } }
     else {
       if(rollT>0.7 && (bodiesRested()||ballBody.position.z<pinsBackZ-0.5)){ settleT+=dt; if(settleT>0.35){ settleT=0; resolveBall(); } } else settleT=0;
@@ -703,6 +833,7 @@ let clock=new THREE.Clock();
 function animate(){ requestAnimationFrame(animate);
   const dt=Math.min(clock.getDelta(),0.033);
   if(phase!=='start') tick(dt);
+  updateMysteryBox(dt); updateDancer(dt);
   updateConfetti(dt); updateTrail(dt); updateCamera(dt);
   renderer.render(scene,camera);
 }
@@ -747,6 +878,7 @@ const sound=(function(){ let actx=null,muted=false;
     quake(){ init(); noise(0.7,0.32); sweep(120,38,0.6,0.4,'sine'); },
     shrink(){ init(); sweep(800,150,0.75,0.11,'sine'); },
     boink(){ init(); tone(300,0.14,'sine',0.13); },
+    dance(){ init(); if(!actx||muted)return; const seq=[523,523,659,587,523,587,659,440, 392,440,523,440,392,330,392,523]; seq.forEach((f,i)=>setTimeout(()=>{ tone(f,0.16,'square',0.09); tone(f/2,0.16,'triangle',0.05); },i*150)); },
     strike(){ init(); [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,0.18,'triangle',0.16),i*70)); noise(0.22,0.3); }, applause };
 })();
 muteBtn.addEventListener('click',()=>{ const m=muteBtn.textContent==='🔊'; sound.mute(m); muteBtn.textContent=m?'🔇':'🔊'; });
@@ -819,10 +951,10 @@ function runPlaying(){ hud.classList.add('hidden'); lobby.classList.add('hidden'
   else { MP.bowling=false; MP.spectating=true; spectate(t); } }
 // ---- spectating: watch the active player's throw live ----
 function mpWriteLive(aim,power){ const stand=pins.map((p,i)=>p.down?-1:i).filter(i=>i>=0);
-  mpUpdate({ live:{ by:MP.id, seq:Date.now()+'_'+Math.floor(Math.random()*1e4), aim:aim, power:power, acc:acc||null, big:!!bigBall, stand:stand } }); }
+  mpUpdate({ live:{ by:MP.id, seq:Date.now()+'_'+Math.floor(Math.random()*1e4), aim:aim, power:power, box: mboxActive?{x:mboxX,z:mboxZ,eff:mboxEffect}:null, stand:stand } }); }
 function setupRackTo(stand){ resetRack(); const keep=new Set(stand||[0,1,2,3,4,5,6,7,8,9]); for(let i=0;i<pins.length;i++){ if(!keep.has(i)){ pins[i].down=true; removePinObjects(pins[i]); } } }
-function mpReplay(live, thrower){ mpReplaying=true; round=MP.round; steerK=0; bigBall=!!live.big; ballRadius=bigBall?0.405:0.135; buildBall(thrower.isTrevor?ballMatTrevor:ballMatHuman);
-  setupRackTo(live.stand); placeBall(); launch(live.aim||0, live.power==null?0.7:live.power, live.acc||null); mpReplaying=false; }
+function mpReplay(live, thrower){ mpReplaying=true; round=MP.round; steerK=0; bigBall=false; ballRadius=0.135; buildBall(thrower.isTrevor?ballMatTrevor:ballMatHuman);
+  setupRackTo(live.stand); placeBall(); clearEffects(); spawnMysteryBox(live.box||null); launch(live.aim||0, live.power==null?0.7:live.power); mpReplaying=false; }
 function spectate(t){ mpTurn.textContent = t?('👀 Watching '+t.name):'Watching…';
   const live=MP.doc&&MP.doc.live;
   if(live && t && live.by===t.id && live.seq!==MP.lastSeen){ MP.lastSeen=live.seq; mpReplay(live,t); } }
@@ -879,7 +1011,7 @@ $('lbBack').addEventListener('click', ()=>{ $('lbScreen').classList.add('hidden'
 function resize(){ const w=innerWidth,h=innerHeight; renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); }
 addEventListener('resize',resize); addEventListener('orientationchange',resize);
 
-buildEnvironment(); initAccidents(); initConfetti(); initTrail(); buildBall(ballMatHuman); resetRack(); resize();
+buildEnvironment(); initAccidents(); initMysteryBox(); faceTex=makeFaceTexture(); initConfetti(); initTrail(); buildBall(ballMatHuman); resetRack(); resize();
 loadingEl.classList.add('hidden');
 { const jc=new URLSearchParams(location.search).get('s'); if(jc) openOnline(jc.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5)); else startScreen.classList.remove('hidden'); }
 animate();
